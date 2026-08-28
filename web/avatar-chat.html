@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>LiveTalking 全屏语音对话</title>
+    <style>
+        html, body {
+            margin: 0;
+            height: 100%;
+            background: #000;
+            overflow: hidden;
+            font-family: -apple-system, "Microsoft YaHei", "Segoe UI", sans-serif;
+        }
+
+        /* 全屏展示层：默认撑满视口 */
+        #stage {
+            position: fixed;
+            inset: 0;
+            background: #000;
+        }
+        #video {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background: #000;
+        }
+        #audio {
+            display: none;
+        }
+
+        /* 底部悬浮操作栏 */
+        #bar {
+            position: fixed;
+            left: 50%;
+            bottom: 24px;
+            transform: translateX(-50%);
+            z-index: 20;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            border-radius: 999px;
+            background: rgba(20, 20, 30, 0.78);
+            backdrop-filter: blur(8px);
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
+            max-width: 92vw;
+        }
+        .bar-btn {
+            border: none;
+            cursor: pointer;
+            border-radius: 999px;
+            padding: 10px 18px;
+            font-size: 15px;
+            color: #fff;
+            background: #3a3f4b;
+            transition: background .15s;
+            white-space: nowrap;
+        }
+        .bar-btn:hover {
+            background: #4a5264;
+        }
+        .bar-btn.active {
+            background: #e04a3a;
+        }
+        .bar-btn.active:hover {
+            background: #c03a2c;
+        }
+        #msg {
+            flex: 1;
+            min-width: 180px;
+            padding: 10px 14px;
+            font-size: 15px;
+            color: #fff;
+            background: rgba(255, 255, 255, 0.12);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            border-radius: 999px;
+            outline: none;
+        }
+        #msg::placeholder {
+            color: rgba(255, 255, 255, 0.55);
+        }
+
+        /* 设置弹窗 (藏起原 input text / Use STUN server / asr服务器地址) */
+        #modal-mask {
+            position: fixed;
+            inset: 0;
+            z-index: 30;
+            background: rgba(0, 0, 0, 0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+        #modal-mask.open {
+            display: flex;
+        }
+        #modal {
+            width: 460px;
+            max-width: 92vw;
+            max-height: 86vh;
+            overflow: auto;
+            background: #171a21;
+            color: #e6e8ee;
+            border-radius: 12px;
+            padding: 22px 24px 18px;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+        }
+        #modal h3 {
+            margin: 14px 0 8px;
+            font-size: 15px;
+            color: #9aa2b2;
+            font-weight: 600;
+            border-bottom: 1px solid #2a2f3a;
+            padding-bottom: 6px;
+        }
+        #modal h3:first-child {
+            margin-top: 0;
+        }
+        #modal textarea {
+            width: 100%;
+            box-sizing: border-box;
+            resize: vertical;
+            background: #0f1117;
+            color: #e6e8ee;
+            border: 1px solid #2a2f3a;
+            border-radius: 8px;
+            padding: 8px;
+            font-size: 14px;
+        }
+        #modal input[type="text"], #modal input[type="url"], #modal input[type="email"] {
+            width: 100%;
+            box-sizing: border-box;
+            background: #0f1117;
+            color: #e6e8ee;
+            border: 1px solid #2a2f3a;
+            border-radius: 8px;
+            padding: 8px;
+            font-size: 14px;
+        }
+        #modal .orig {
+            margin-bottom: 10px;
+        }
+        #modal .row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 8px 0 4px;
+        }
+        #modal-close {
+            float: right;
+            border: none;
+            cursor: pointer;
+            background: #2a2f3a;
+            color: #e6e8ee;
+            border-radius: 8px;
+            padding: 6px 12px;
+        }
+        #modal .send-btn {
+            margin-top: 8px;
+            border: none;
+            cursor: pointer;
+            background: #3a5fd0;
+            color: #fff;
+            border-radius: 8px;
+            padding: 8px 16px;
+        }
+        .hint {
+            font-size: 12px;
+            color: #7c8494;
+        }
+        #call-status {
+            font-size: 12px;
+            color: #7c8494;
+            text-align: center;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+
+<!-- 全屏展示层 -->
+<div id="stage">
+    <video id="video" autoplay playsinline muted="false"></video>
+    <audio id="audio" autoplay="true"></audio>
+    <input type="hidden" id="sessionid" value="0"/>
+</div>
+
+<!-- 底部操作栏 -->
+<div id="bar">
+    <button id="btn-call" class="bar-btn" onclick="toggleVoice()">开启通话</button>
+    <input id="msg" type="text" placeholder="语音识别结果 / 输入文字直接对话，回车发送" autocomplete="off"/>
+    <button id="btn-fullscreen" class="bar-btn" onclick="toggleFullscreen()">⛶ 全屏</button>
+    <button id="btn-settings" class="bar-btn" onclick="openSettings()">⚙ 设置</button>
+</div>
+
+<!-- 设置弹窗 (藏起原 input text / Use STUN server / asr服务器地址) -->
+<div id="modal-mask" onclick="if(event.target===this)closeSettings()">
+    <div id="modal">
+        <button id="modal-close" onclick="closeSettings()">✕ 关闭</button>
+
+        <h3>文本发送 / Use STUN server</h3>
+        <div class="row">
+            <input id="use-stun" type="checkbox"/>
+            <label for="use-stun" style="cursor:pointer;">Use STUN server</label>
+        </div>
+        <div class="row">
+            <input id="barge-in" type="checkbox" checked="checked"/>
+            <label for="barge-in" style="cursor:pointer;">插话：数字人说话时可开口打断</label>
+        </div>
+        <div class="orig">
+            <textarea id="echo-text" rows="2" placeholder="input text：输入一段文字，发送后数字人立即复述">test</textarea>
+            <button class="send-btn" onclick="sendEcho()">发送文字</button>
+        </div>
+
+        <h3>asr服务器地址(必填)</h3>
+        <input id="wssip" type="text" value=""
+               onchange="addresschange()"
+               placeholder="wss://www.funasr.com:10096/ 或本地 ws://host/api/asr"/>
+        <div class="hint" id="asr-hint"></div>
+
+        <h3>热词识别（Hotwords）</h3>
+        <textarea id="hotwords" rows="3" placeholder="每行一个热词，空格隔开权重&#10;例如：阿里巴巴 20&#10;　　　　hello world 40"></textarea>
+        <div class="hint">一行一个关键字、空格隔开权重，识别时提高命中率。外部 FunASR 服务生效，本地 SenseVoice 端点暂不支持热词加权。</div>
+
+        <a id="wsslink" href="#" onclick="openAuth();return false;"><div id="info_wslink" style="margin-top:6px;">点此处手工授权（IOS手机）</div></a>
+
+        <div id="call-status"></div>
+    </div>
+</div>
+
+<!-- 本地化依赖（web/lib/）：jquery + onnxruntime-web + ricky0123/vad-web，离线可用 -->
+<script src="lib/jquery-2.1.1.min.js"></script>
+<script src="lib/ort.min.js"></script>
+<script src="lib/bundle.min.js"></script>
+
+<script type="text/javascript" charset="utf-8">
+    /* ==========================================================
+     * 0. 全局状态
+     * ========================================================== */
+    var pc = null;                 // WebRTC PeerConnection
+
+    function getSessionId() {
+        return String(document.getElementById('sessionid').value) || '0';
+    }
+
+    /* ==========================================================
+     * 1. WebRTC：打开页面即自动连接数字人（改编自 client.js）
+     * ========================================================== */
+    function startAvatars() {
+        var config = { sdpSemantics: 'unified-plan' };
+        if (document.getElementById('use-stun').checked) {
+            config.iceServers = [{ urls: ['stun:stun.l.google.com:19302'] }];
+        }
+        pc = new RTCPeerConnection(config);
+        pc.addEventListener('track', function (evt) {
+            if (evt.track.kind == 'video') {
+                document.getElementById('video').srcObject = evt.streams[0];
+                document.getElementById('video').muted = false;
+                document.getElementById('video').play().catch(function () {});
+            } else {
+                document.getElementById('audio').srcObject = evt.streams[0];
+            }
+        });
+        // 发起连接前先静音，待轨道到来后自动播放
+        document.getElementById('video').muted = true;
+        negotiate();
+    }
+
+    function negotiate() {
+        pc.addTransceiver('video', { direction: 'recvonly' });
+        pc.addTransceiver('audio', { direction: 'recvonly' });
+        return pc.createOffer().then(function (offer) {
+            return pc.setLocalDescription(offer);
+        }).then(function () {
+            // 等待 ICE 收集完成
+            return new Promise(function (resolve) {
+                if (pc.iceGatheringState === 'complete') {
+                    resolve();
+                } else {
+                    var checkState = function () {
+                        if (pc.iceGatheringState === 'complete') {
+                            pc.removeEventListener('icegatheringstatechange', checkState);
+                            resolve();
+                        }
+                    };
+                    pc.addEventListener('icegatheringstatechange', checkState);
+                }
+            });
+        }).then(function () {
+            var offer = pc.localDescription;
+            return fetch('/offer', {
+                body: JSON.stringify({ sdp: offer.sdp, type: offer.type }),
+                headers: { 'Content-Type': 'application/json' },
+                method: 'POST'
+            });
+        }).then(function (response) {
+            return response.json();
+        }).then(function (answer) {
+            document.getElementById('sessionid').value = answer.sessionid || '0';
+            return pc.setRemoteDescription(answer);
+        }).catch(function (e) {
+            console.error('WebRTC negotiate error:', e);
+        });
+    }
+
+    function stopAvatars() {
+        if (pc) {
+            var p = pc;
+            pc = null;
+            setTimeout(function () { try { p.close(); } catch (e) {} }, 500);
+        }
+    }
+
+    window.onunload = function () { stopAvatars(); };
+    window.onbeforeunload = function () { stopAvatars(); };
+
+    /* ==========================================================
+     * 2. 文本输入（echo，直达 TTS）
+     * ========================================================== */
+    function sendText(text) {
+        if (!text) return;
+        fetch('/human', {
+            body: JSON.stringify({
+                text: text,
+                type: 'echo',
+                interrupt: true,
+                sessionid: getSessionId()
+            }),
+            headers: { 'Content-Type': 'application/json' },
+            method: 'POST'
+        }).catch(function (er) { console.error('sendText error:', er); });
+    }
+
+    /* ==========================================================
+     * 3. 语音通话：ricky0123/vad（浏览器内 Silero VAD）+ 后端识别 + LLM
+     *    插话(barge-in)：VAD 全程监听。数字人正在说话时用户开口，
+     *    onSpeechStart 立即打断它；识别结果入 FIFO 顺序处理，
+     *    每条对话带 interrupt:true 覆盖旧回复。回声靠
+     *    getUserMedia 的 echoCancellation + 开口抑制窗口 + 可关开关。
+     * ========================================================== */
+
+    var callOn = false;              // 语音通话开关
+    var myvad = null;                // MicVAD 实例
+    var utteranceQueue = [];         // 待识别的语句 FIFO
+    var draining = false;            // 顺序处理队列中
+    var avatarSpeaking = false;      // 数字人是否正在说话（轮询）
+    var pollTimer = null;            // /is_speaking 轮询
+    var suppressUntil = 0;           // 回声抑制截止时间戳(ms)
+    var suppressMs = 800;            // 数字人开口后抑制自回声时长
+
+    function setCallStatus(msg) {
+        var el = document.getElementById('call-status');
+        if (el) el.textContent = msg || '';
+    }
+
+    function renderCallBtn() {
+        var b = document.getElementById('btn-call');
+        b.textContent = callOn ? '关闭通话' : '开启通话';
+        b.classList.toggle('active', callOn);
+    }
+
+    function bargeInEnabled() {
+        var c = document.getElementById('barge-in');
+        return !c || c.checked;      // 默认开启
+    }
+
+    function toggleVoice() {
+        if (callOn) { stopCall(); } else { startCall(); }
+    }
+
+    async function startCall() {
+        var Uri = document.getElementById('wssip').value;
+        if (!Uri.match(/^wss?:\/\//)) {
+            setCallStatus('请先在设置中填写正确的 asr 服务器地址');
+            return;
+        }
+        if (!window.vad || !window.vad.MicVAD) {
+            setCallStatus('语音检测库未加载');
+            return;
+        }
+        callOn = true;
+        renderCallBtn();
+        setCallStatus('初始化语音检测...');
+        try {
+            myvad = await window.vad.MicVAD.new({
+                onnxWASMBasePath: "lib/",   // 本地 onnxruntime wasm
+                baseAssetPath: "lib/",      // 本地 silero 模型 + worklet
+                onSpeechStart: function () {
+                    if (!callOn) return;
+                    // 插话：数字人正在说话时用户开口 → 立即打断
+                    if (bargeInEnabled() && avatarSpeaking && Date.now() > suppressUntil) {
+                        interruptAvatar();
+                        suppressUntil = Date.now() + suppressMs;
+                        setCallStatus('🛑 已打断数字人...');
+                    }
+                    if (!draining) setCallStatus('🎤 说话中...');
+                },
+                onSpeechRealStart: function () {
+                    if (!draining) setCallStatus('🎤 收集中...');
+                },
+                onVADMisfire: function () {
+                    if (!draining) setCallStatus('🎙 正在倾听...');
+                },
+                onSpeechEnd: function (audio) {
+                    if (!callOn) return;
+                    utteranceQueue.push(audio);   // 入队，绝不丢弃
+                    drainQueue();
+                },
+            });
+            myvad.start();
+            startPolling();
+            setCallStatus('🎙 正在倾听，请说话...');
+        } catch (e) {
+            console.error('MicVAD init failed:', e);
+            setCallStatus('语音检测初始化失败（需 localhost/https + 麦克风）');
+            callOn = false;
+            renderCallBtn();
+        }
+    }
+
+    // 立即打断数字人当前说话
+    function interruptAvatar() {
+        fetch('/interrupt_talk', {
+            body: JSON.stringify({ sessionid: getSessionId() }),
+            headers: { 'Content-Type': 'application/json' }, method: 'POST'
+        }).catch(function (er) { console.error('interrupt error:', er); });
+    }
+
+    var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+
+    // 顺序处理识别队列：识别 → LLM 对话（interrupt:true 覆盖旧回复）
+    async function drainQueue() {
+        if (draining || !callOn) return;
+        draining = true;
+        while (utteranceQueue.length && callOn) {
+            var audio = utteranceQueue.shift();
+            setCallStatus('🎧 识别中...');
+            var text = await runTranscription(audio);
+            if (!text) {
+                setCallStatus('未识别到有效内容');
+                continue;
+            }
+            document.getElementById('msg').value = text;   // 输入框显示识别结果
+            setCallStatus('识别 → 请稍候...');
+            await sendChat(text);
+        }
+        draining = false;
+        if (callOn) setCallStatus('🎙 正在倾听...');
+    }
+
+    function sendChat(text) {
+        return fetch('/human', {
+            body: JSON.stringify({
+                text: text, type: 'chat', interrupt: true, sessionid: getSessionId()
+            }),
+            headers: { 'Content-Type': 'application/json' }, method: 'POST'
+        }).catch(function (er) { console.error('ASR chat error:', er); });
+    }
+
+    // 读取设置中的热词，转成 FunASR 期望的 {"热词":权重} JSON 字符串。
+    // 与 asr/index.html（webrtcapi-asr 内嵌的 ASR 演示页）保持一致：
+    // 每行一个热词，空格隔开权重，如"阿里巴巴 20"。
+    function getHotwords() {
+        var obj = document.getElementById('hotwords');
+        if (!obj || !obj.value || obj.value.length <= 0) return null;
+        var items = obj.value.split(/[\r\n]+/);
+        var jsonresult = {};
+        var regexNum = /^[0-9]*$/;
+        items.forEach(function (item) {
+            var result = item.split(" ");
+            if (result.length >= 2 && regexNum.test(result[result.length - 1])) {
+                var wordstr = result.slice(0, -1).join(" ");
+                jsonresult[wordstr.trim()] = parseInt(result[result.length - 1], 10);
+            }
+        });
+        return JSON.stringify(jsonresult);
+    }
+
+    function runTranscription(float32) {
+        return new Promise(function (resolve) {
+            var Uri = document.getElementById('wssip').value;
+            var s = null;
+            try { s = new WebSocket(Uri); } catch (e) { resolve(''); return; }
+            var done = false;
+            var timer = window.setTimeout(function () {
+                if (!done) { done = true; try { s.close(); } catch (e) {} resolve(''); }
+            }, 30000);
+
+            s.onopen = function () {
+                var request = {
+                    chunk_size: [5, 10, 5], wav_name: "h5", is_speaking: true,
+                    chunk_interval: 10, itn: false, mode: "2pass"
+                };
+                var hotwords = getHotwords();
+                if (hotwords) request.hotwords = hotwords;   // 热词：识别时优先命中
+                s.send(JSON.stringify(request));
+                var n = float32.length;
+                var int16 = new Int16Array(n);
+                for (var i = 0; i < n; i++) {
+                    var v = Math.max(-1, Math.min(1, float32[i]));
+                    int16[i] = (v < 0) ? (v * 0x8000) : (v * 0x7FFF);
+                }
+                var chunk = 960;
+                for (var o = 0; o < n; o += chunk) {
+                    var sl = int16.slice(o, Math.min(o + chunk, n)); // 拷贝，避免发整个 buffer
+                    s.send(sl.buffer);
+                }
+                s.send(JSON.stringify({
+                    chunk_size: [5, 10, 5], wav_name: "h5", is_speaking: false,
+                    chunk_interval: 10, mode: "2pass"
+                }));
+            };
+            s.onmessage = function (ev) {
+                var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+                if (m && m.is_final && (m.mode === '2pass-offline' || m.mode === 'offline') && !done) {
+                    done = true; clearTimeout(timer);
+                    try { s.close(); } catch (e) {}
+                    resolve(m.text || '');
+                }
+            };
+            s.onerror = function () {
+                if (!done) { done = true; clearTimeout(timer); try { s.close(); } catch (e) {} resolve(''); }
+            };
+            s.onclose = function () {
+                if (!done) { done = true; clearTimeout(timer); resolve(''); }
+            };
+        });
+    }
+
+    async function is_avatar_speaking() {
+        var res = await fetch('/is_speaking', {
+            body: JSON.stringify({ sessionid: getSessionId() }),
+            headers: { 'Content-Type': 'application/json' }, method: 'POST'
+        });
+        var d = await res.json();
+        return !!d.data;
+    }
+
+    // 轮询数字人说话状态，供插话与回声抑制使用
+    function startPolling() {
+        stopPolling();
+        pollTimer = window.setInterval(function () {
+            if (!callOn) return;
+            is_avatar_speaking().then(function (sp) {
+                var was = avatarSpeaking;
+                avatarSpeaking = sp;
+                // 数字人开口瞬间抑制自身首段回声
+                if (sp && !was) suppressUntil = Date.now() + suppressMs;
+            }).catch(function () {});
+        }, 500);
+    }
+    function stopPolling() {
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    }
+
+    function stopCall() {
+        callOn = false;
+        stopPolling();
+        avatarSpeaking = false;
+        utteranceQueue = [];
+        draining = false;
+        if (myvad) { try { myvad.destroy(); } catch (e) {} myvad = null; }
+        renderCallBtn();
+        setCallStatus('已关闭通话');
+    }
+
+    /* ==========================================================
+     * 4. 全屏（浏览器原生切换）
+     * ========================================================== */
+    function toggleFullscreen() {
+        var doc = document;
+        var el = doc.documentElement;
+        if (!doc.fullscreenElement && !doc.webkitFullscreenElement && !doc.mozFullScreenElement) {
+            (el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen).call(el);
+        } else {
+            (doc.exitFullscreen || doc.webkitExitFullscreen || doc.mozCancelFullScreen).call(doc);
+        }
+    }
+
+    /* ==========================================================
+     * 5. 设置弹窗 + ASR 地址
+     * ========================================================== */
+    function openSettings() {
+        document.getElementById('modal-mask').classList.add('open');
+    }
+    function closeSettings() {
+        document.getElementById('modal-mask').classList.remove('open');
+    }
+    function sendEcho() {
+        var t = document.getElementById('echo-text').value;
+        if (t) { sendText(t); }
+    }
+    function addresschange() {
+        var Uri = document.getElementById('wssip').value;
+        var authUri = Uri.replace(/^wss/i, 'https');
+        var link = document.getElementById('wsslink');
+        link.href = authUri;
+        link.setAttribute('data-auth', authUri);
+    }
+    function openAuth() {
+        var auth = document.getElementById('wsslink').getAttribute('data-auth') ||
+            document.getElementById('wssip').value.replace(/^wss/i, 'https');
+        window.open(auth, '_blank');
+        return false;
+    }
+
+    /* ==========================================================
+     * 6. 初始化
+     * ========================================================== */
+    $(document).ready(function () {
+        // 自动检测本地 ASR 端点（与 asr/main.js 一致）
+        var protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+        var host = window.location.host;
+        document.getElementById('wssip').value = protocol + host + "/api/asr";
+        document.getElementById('asr-hint').textContent = "已自动检测为本地端点: " + protocol + host + "/api/asr";
+        addresschange();
+
+        // 底栏输入框：回车发送文字
+        $('#msg').on('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                sendText($(this).val().trim());
+                $(this).val('');
+            }
+        });
+
+        // 打开页面即自动连接数字人（全屏展示）
+        startAvatars();
+    });
+</script>
+</body>
+</html>
