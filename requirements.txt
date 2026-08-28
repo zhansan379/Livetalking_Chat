@@ -44,6 +44,9 @@ openai
 #websocket-client
 websockets==12.0
 dashscope
+# web_search 依赖；lxml 需 <6（6.x 的 DLL 在本机 uv Python 上加载失败）
+ddgs
+lxml<6
 #gradio_client
 #azure-cognitiveservices-speech
 

@@ -43,45 +43,85 @@ def get_session(request, sessionid: str):
 # 触发切句推送的标点
 _SENTENCE_PUNCT = set(",.!;:，。！？：；")
 
+# 工具循环触顶/异常时的应用层降级话术（区别于模型生成的答案）
+_TOOL_FAIL_FALLBACK = "我这次没查到足够的信息，换个问法试试好吗？"
+
+
+def _feed_talk(avatar_session, text: str, datainfo: dict):
+    """把一段文本按标点切句、超过 10 字即推送给 TTS，末尾剩余部分补推。"""
+    if not text:
+        return
+    buf = ""
+    lastpos = 0
+    for i, ch in enumerate(text):
+        if ch in _SENTENCE_PUNCT:
+            buf += text[lastpos:i + 1]
+            lastpos = i + 1
+            if len(buf) > 10:
+                avatar_session.put_msg_txt(buf, datainfo)
+                buf = ""
+    buf += text[lastpos:]
+    if buf:
+        avatar_session.put_msg_txt(buf, datainfo)
+
 
 async def stream_llm_chat(avatar_session, session_id: str, message: str, datainfo: dict = {}):
-    """基于 infra_ai + agent 记忆的流式问答：加载历史、逐 token 消费，按标点切句推送给 TTS。
+    """基于 infra_ai + agent 记忆的问答：优先走工具循环，无启用工具时退回流式问答。
 
     - 使用 agent.ChatAgent 加载/保存完整转录，并把「历史摘要 + 最近几轮」拼进上下文；
-    - 回复完成后开启后台异步压缩（不阻塞本次回复）；
-    - 兼容旧 llm_response 的行为：累积到超过 10 个字符才推送，末尾剩余部分补推。
+    - 读取 agent 配置，若启用了工具（如 web_search）则用 run_tool_loop 解析成最终文本再按句说话；
+      否则保持原有 async_stream_call_llm 流式消费；
+    - 工具循环返回 None（触顶/异常）时说话用的是一句固定的应用层降级话术，不伪造模型回复；
+    - 回复完成后开启后台异步压缩（不阻塞本次回复）。
     """
-    from infra_ai import async_stream_call_llm
     from agent import ChatAgent
+    from agent.config import get_agent_config
+    from agent.tool_loop import build_tools, list_enabled_tools, run_tool_loop
 
     agent = ChatAgent(session_id)
     messages = agent.build_messages(message)  # 同步组装上下文，不触发压缩
     agent.add_user_message(message)
 
-    buf = ""
-    full_reply = []
-    try:
-        async for token in async_stream_call_llm(messages):
-            if not token:
-                continue
-            full_reply.append(token)
-            lastpos = 0
-            for i, ch in enumerate(token):
-                if ch in _SENTENCE_PUNCT:
-                    buf += token[lastpos:i + 1]
-                    lastpos = i + 1
-                    if len(buf) > 10:
-                        avatar_session.put_msg_txt(buf, datainfo)
-                        buf = ""
-            buf += token[lastpos:]
-        if buf:
-            avatar_session.put_msg_txt(buf, datainfo)
+    cfg = get_agent_config()
+    tools = build_tools(list_enabled_tools(cfg))
 
-        reply = "".join(full_reply).strip()
-        if reply:
-            agent.add_assistant_message(reply)
-    except Exception as e:
-        logger.exception("infra_ai chat exception: %s", e)
+    reply = None
+    if tools:
+        final = await run_tool_loop(messages, tools, cfg)
+        if final:
+            reply = final
+            _feed_talk(avatar_session, final, datainfo)
+        else:
+            logger.warning("tool loop returned None, use fallback phrase")
+            _feed_talk(avatar_session, _TOOL_FAIL_FALLBACK, datainfo)
+    else:
+        # 无启用工具 → 保留原有流式逐字消费。缓冲区跨 token 累积，
+        # 按标点切句、超过 10 字即推送，末尾剩余部分补推。
+        from infra_ai import async_stream_call_llm
+        full_reply = []
+        buf = ""
+        try:
+            async for token in async_stream_call_llm(messages):
+                if not token:
+                    continue
+                full_reply.append(token)
+                lastpos = 0
+                for i, ch in enumerate(token):
+                    if ch in _SENTENCE_PUNCT:
+                        buf += token[lastpos:i + 1]
+                        lastpos = i + 1
+                        if len(buf) > 10:
+                            avatar_session.put_msg_txt(buf, datainfo)
+                            buf = ""
+                buf += token[lastpos:]
+            if buf:
+                avatar_session.put_msg_txt(buf, datainfo)
+            reply = "".join(full_reply).strip()
+        except Exception as e:
+            logger.exception("infra_ai chat exception: %s", e)
+
+    if reply:
+        agent.add_assistant_message(reply)
 
     # 完整转录先落盘，再后台异步压缩（不阻塞本次回复）
     try:

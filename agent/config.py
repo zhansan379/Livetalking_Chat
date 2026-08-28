@@ -20,6 +20,13 @@ _DEFAULT = {
         "summarize_prompt": "请把以下对话历史压缩成一段简短的要点总结，保留关键信息；直接输出总结，不要加任何前缀或说明。",
         "summarize_model": None,
     },
+    "tools": {
+        "max_rounds": 4,
+        "web_search": {
+            "enabled": True,
+            "max_sources": 5,
+        },
+    },
 }
 
 
@@ -51,6 +58,12 @@ class AgentConfig:
             "summarize_prompt", _DEFAULT["memory"]["summarize_prompt"]
         )
         self.summarize_model: str | None = mem.get("summarize_model") or None
+
+        tools = data.get("tools", {}) or {}
+        ws = tools.get("web_search", {}) or {}
+        self.tool_max_rounds: int = int(tools.get("max_rounds", 4) or 4)
+        self.tool_web_search_enabled: bool = bool(ws.get("enabled", True))
+        self.tool_web_search_max_sources: int = int(ws.get("max_sources", 5) or 5)
 
     @property
     def max_summary_tokens(self) -> int:

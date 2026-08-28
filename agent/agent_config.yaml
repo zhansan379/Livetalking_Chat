@@ -15,3 +15,10 @@ memory:
   summarize_prompt: "请把以下对话历史压缩成一段简短的要点总结，保留关键信息；直接输出总结，不要加任何前缀或说明。"
   # 压缩使用的模型；留空(null)则复用 infra_ai 默认文本模型
   summarize_model: null
+
+tools:
+  # 工具循环的防御性轮次上限（正常 1 轮即出口）
+  max_rounds: 4
+  web_search:
+    enabled: true      # true→头像对话可联网搜索
+    max_sources: 5     # 每次搜索最多返回几条结果
