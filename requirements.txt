@@ -30,8 +30,6 @@ einops
 
 transformers #==4.46.2
 edge_tts
-flask
-#flask_sockets
 opencv-python-headless
 aiortc
 aiohttp_cors
