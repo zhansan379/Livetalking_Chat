@@ -1,0 +1,87 @@
+###############################################################################
+#  对话/记忆配置加载器：读取 agent_config.yaml，缺失字段回退默认值
+###############################################################################
+
+import os
+
+import yaml
+
+from utils.logger import logger
+
+_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent_config.yaml")
+
+_DEFAULT = {
+    "system_prompt": "你是一个知识助手，尽量以简短、口语化的方式输出",
+    "memory": {
+        "enabled": True,
+        "compress_threshold": 10,
+        "keep_recent": 5,
+        "target_summary_chars": 600,
+        "summarize_prompt": "请把以下对话历史压缩成一段简短的要点总结，保留关键信息；直接输出总结，不要加任何前缀或说明。",
+        "summarize_model": None,
+    },
+}
+
+
+def _merge(base: dict, override: dict) -> dict:
+    """浅合并 dict，override 优先；嵌套 dict 递归合并。"""
+    out = dict(base)
+    for k, v in (override or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+class AgentConfig:
+    """agent 运行期配置（含 memory 子配置）。"""
+
+    def __init__(self, data: dict):
+        self._data = data
+        mem = data.get("memory", {}) or {}
+
+        self.system_prompt: str = data.get("system_prompt", _DEFAULT["system_prompt"])
+
+        self.memory_enabled: bool = mem.get("enabled", True)
+        self.compress_threshold: int = int(mem.get("compress_threshold", 10) or 10)
+        self.keep_recent: int = int(mem.get("keep_recent", 5) or 5)
+        self.target_summary_chars: int = int(mem.get("target_summary_chars", 600) or 600)
+        self.summarize_prompt: str = mem.get(
+            "summarize_prompt", _DEFAULT["memory"]["summarize_prompt"]
+        )
+        self.summarize_model: str | None = mem.get("summarize_model") or None
+
+    @property
+    def max_summary_tokens(self) -> int:
+        """用于 max_tokens 的硬封顶：预留 ~1.5 倍余量（中文约 1 字/token）。"""
+        return max(64, int(self.target_summary_chars * 1.5))
+
+
+def load_agent_config() -> AgentConfig:
+    """加载 agent_config.yaml；文件缺失/解析失败时回退默认值并告警。"""
+    try:
+        with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+    except Exception as e:  # noqa: BLE001 - 任何加载失败都不应让服务崩掉
+        logger.warning("agent config load failed (%s), use defaults", e)
+        raw = {}
+    return AgentConfig(_merge(_DEFAULT, raw))
+
+
+_config: AgentConfig | None = None
+
+
+def get_agent_config() -> AgentConfig:
+    """进程内缓存单例配置。"""
+    global _config
+    if _config is None:
+        _config = load_agent_config()
+        logger.info(
+            "agent config loaded: threshold=%d keep_recent=%d target=%d enable=%s",
+            _config.compress_threshold,
+            _config.keep_recent,
+            _config.target_summary_chars,
+            _config.memory_enabled,
+        )
+    return _config

@@ -132,7 +132,8 @@ http://<serverip>:8010/
 app.py                       # 服务入口，路由注册、CORS、会话管理
 config.py                    # CLI 参数解析
 config.yaml                  # 配置文件（默认值）
-llm.py                       # 大模型对话接口
+infra_ai/                    # LLM 调用基础设施（熔断/路由/限流/流式），取代原 llm.py
+server/routes.py             # API 路由 + chat 流式问答（消费 infra_ai）
 registry.py                  # avatar 插件注册
 avatars/                     # 数字人模型插件（musetalk/wav2lip/ultralight）
 server/                      # 后端核心

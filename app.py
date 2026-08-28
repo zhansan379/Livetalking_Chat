@@ -35,7 +35,6 @@ from aiortc import RTCPeerConnection, RTCSessionDescription,RTCIceServer,RTCConf
 from aiortc.rtcrtpsender import RTCRtpSender
 from server.webrtc import HumanPlayer
 from avatars.base_avatar import BaseAvatar
-from llm import llm_response
 import registry
 from server.routes import setup_routes
 from server.rtc_manager import RTCManager
@@ -103,6 +102,11 @@ async def whep(request):
 
 async def on_shutdown(app):
     await rtc_manager.shutdown()
+    try:
+        from infra_ai import aclose_all_clients
+        await aclose_all_clients()
+    except ImportError:
+        pass
 
 async def download_record(request):
     sessionid = request.match_info.get('sessionid')
@@ -168,7 +172,6 @@ def main():
 
     #############################################################################
     appasync = web.Application(client_max_size=1024**2*100)
-    appasync["llm_response"] = llm_response
     appasync["opt"] = opt
     appasync["rtc_manager"] = rtc_manager
 

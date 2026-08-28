@@ -38,6 +38,60 @@ def get_session(request, sessionid: str):
     return session_manager.get_session(sessionid)
 
 
+# ─── LLM 对话（infra_ai + agent 记忆）─────────────────────────────────────
+
+# 触发切句推送的标点
+_SENTENCE_PUNCT = set(",.!;:，。！？：；")
+
+
+async def stream_llm_chat(avatar_session, session_id: str, message: str, datainfo: dict = {}):
+    """基于 infra_ai + agent 记忆的流式问答：加载历史、逐 token 消费，按标点切句推送给 TTS。
+
+    - 使用 agent.ChatAgent 加载/保存完整转录，并把「历史摘要 + 最近几轮」拼进上下文；
+    - 回复完成后开启后台异步压缩（不阻塞本次回复）；
+    - 兼容旧 llm_response 的行为：累积到超过 10 个字符才推送，末尾剩余部分补推。
+    """
+    from infra_ai import async_stream_call_llm
+    from agent import ChatAgent
+
+    agent = ChatAgent(session_id)
+    messages = agent.build_messages(message)  # 同步组装上下文，不触发压缩
+    agent.add_user_message(message)
+
+    buf = ""
+    full_reply = []
+    try:
+        async for token in async_stream_call_llm(messages):
+            if not token:
+                continue
+            full_reply.append(token)
+            lastpos = 0
+            for i, ch in enumerate(token):
+                if ch in _SENTENCE_PUNCT:
+                    buf += token[lastpos:i + 1]
+                    lastpos = i + 1
+                    if len(buf) > 10:
+                        avatar_session.put_msg_txt(buf, datainfo)
+                        buf = ""
+            buf += token[lastpos:]
+        if buf:
+            avatar_session.put_msg_txt(buf, datainfo)
+
+        reply = "".join(full_reply).strip()
+        if reply:
+            agent.add_assistant_message(reply)
+    except Exception as e:
+        logger.exception("infra_ai chat exception: %s", e)
+
+    # 完整转录先落盘，再后台异步压缩（不阻塞本次回复）
+    try:
+        agent.save()
+        if agent.should_compress():
+            asyncio.create_task(agent.compress_and_save())
+    except Exception as e:
+        logger.exception("agent save/compress trigger exception: %s", e)
+
+
 # ─── 路由处理函数 ──────────────────────────────────────────────────────────
 
 async def human(request):
@@ -60,11 +114,10 @@ async def human(request):
         if params['type'] == 'echo':
             avatar_session.put_msg_txt(params['text'], datainfo)
         elif params['type'] == 'chat':
-            llm_response = request.app.get("llm_response")
-            if llm_response:
-                asyncio.get_event_loop().run_in_executor(
-                    None, llm_response, params['text'], avatar_session, datainfo
-                )
+            # 后台流式消费 infra_ai，避免阻塞 /human 响应（与旧 executor 语义一致）
+            asyncio.create_task(
+                stream_llm_chat(avatar_session, sessionid, params['text'], datainfo)
+            )
 
         return json_ok()
     except Exception as e:

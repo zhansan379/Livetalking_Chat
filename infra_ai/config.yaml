@@ -1,0 +1,106 @@
+# infra_ai 配置文件
+# 敏感值（api_key 等）用 ${ENV_VAR} 占位，加载时从环境变量解析；
+# 支持 ${VAR:-default} 在环境变量缺失时回退默认值。
+
+llm:
+  request_timeout: 180.0        # 单次请求超时（秒）
+  timeout_scale: 0.4            # 超时递增系数
+  max_retries: 3                # 最大重试次数
+  retry_backoff: 2.0            # 重试退避时间（秒）
+  auto_tune_concurrency: false  # 是否自适应调整并发数
+  error_log: "./logs/llm_errors.jsonl"
+
+  circuit_breaker:
+    failure_threshold: 2        # 连续失败 N 次 → 熔断
+    open_duration_sec: 30       # 熔断冷却时间（秒），过期进入 HALF_OPEN 探活
+
+  rate_limits:
+    default:
+      rpm: 60                   # 每分钟请求限制
+      tpm: 100000               # 每分钟 token 限制
+      max_concurrent: 10        # 最大并发数
+
+  routing:
+    chat:
+      default_model: sf-chat
+      candidates:
+        - id: sf-chat
+          provider: siliconflow
+          model: ${SF_CHAT_MODEL:-Qwen/Qwen2.5-72B-Instruct-128K}
+          base_url: ${SF_BASE_URL:-https://api.siliconflow.cn/v1}
+          api_key: ${SF_API_KEY}
+          priority: 1
+          enabled: false
+        - id: sf-chat-backup
+          provider: siliconflow
+          model: ${SF_CHAT_MODEL_BACKUP:-Qwen/Qwen3.6-27B}
+          base_url: ${SF_BASE_URL:-https://api.siliconflow.cn/v1}
+          api_key: ${SF_API_KEY}
+          priority: 2
+          enabled: false
+        - id: bailian-chat
+          provider: bailian
+          model: ${BAILIAN_CHAT_MODEL:-qwen-plus}
+          base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+          api_key: ${DASHSCOPE_API_KEY}
+          priority: 3
+          enabled: true
+    vision:
+      default_model: sf-vision
+      candidates:
+        - id: sf-vision
+          provider: siliconflow
+          model: ${SF_VISION_MODEL:-Qwen/Qwen2.5-VL-72B-Instruct}
+          base_url: ${SF_BASE_URL:-https://api.siliconflow.cn/v1}
+          api_key: ${SF_API_KEY}
+          priority: 1
+          enabled: false
+        - id: bailian-vision
+          provider: bailian
+          model: ${BAILIAN_VISION_MODEL:-qwen-vl-plus}
+          base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+          api_key: ${DASHSCOPE_API_KEY}
+          priority: 2
+          enabled: true
+
+embedding:
+  timeout_scale: 0.4            # 每次重试超时 × (1 + scale × attempt)
+
+  rate_limits:
+    default:
+      rpm: 60
+      tpm: 100000
+      max_concurrent: 10
+
+  routing:
+    text:
+      candidates:
+        - id: sf-text-embedding
+          provider: siliconflow
+          model: ${SF_EMBEDDING_MODEL:-Qwen/Qwen3-Embedding-8B}
+          base_url: ${SF_BASE_URL:-https://api.siliconflow.cn/v1}
+          api_key: ${SF_EMBEDDING_API_KEY:-${SF_API_KEY}}
+          dimensions: 1536
+          priority: 1
+          enabled: true
+    vl:
+      candidates: []
+
+rerank:
+  rate_limits:
+    default:
+      rpm: 60
+      tpm: 100000
+      max_concurrent: 10
+
+  routing:
+    text:
+      default_model: sf-rerank
+      candidates:
+        - id: sf-rerank
+          provider: siliconflow
+          model: ${SF_RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
+          base_url: ${SF_BASE_URL:-https://api.siliconflow.cn/v1}
+          api_key: ${SF_API_KEY}
+          priority: 1
+          enabled: true

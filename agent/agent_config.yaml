@@ -1,0 +1,17 @@
+# agent 对话/记忆配置
+# 修改后重启服务生效。
+
+system_prompt: "你是一个知识助手，尽量以简短、口语化的方式输出"
+
+memory:
+  enabled: true
+  # 自上次压缩后再积累的轮次达到该值 → 触发对旧轮次的压缩（后台异步执行）
+  compress_threshold: 10
+  # 发往 LLM 的上下文里，保留的最近原始轮数（这一部分不参与摘要压缩）
+  keep_recent: 5
+  # 压缩摘要的目标长度（有界：summary 字段稳态尺寸约等于此值），单位：字
+  target_summary_chars: 600
+  # 压缩用的提示词（会被动态追加“控制在约 N 字内”）
+  summarize_prompt: "请把以下对话历史压缩成一段简短的要点总结，保留关键信息；直接输出总结，不要加任何前缀或说明。"
+  # 压缩使用的模型；留空(null)则复用 infra_ai 默认文本模型
+  summarize_model: null
