@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>LiveTalking 全屏语音对话</title>
+    <title>全屏语音对话</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🗣️</text></svg>">
     <style>
         html, body {
             margin: 0;
@@ -254,15 +255,43 @@
             config.iceServers = [{ urls: ['stun:stun.l.google.com:19302'] }];
         }
         pc = new RTCPeerConnection(config);
+        var gMediaStream = null;   // 自建 MediaStream：统一收集音视频 track
+
         pc.addEventListener('track', function (evt) {
+            // 不依赖 evt.streams（addTransceiver(recvonly) 下可能为空或被拆成多流），
+            // 将音视频 track 集中到一个 MediaStream，保证挂到同一视频/音频源。
+            if (!gMediaStream) gMediaStream = new MediaStream();
+            if (gMediaStream.getTracks().indexOf(evt.track) < 0) gMediaStream.addTrack(evt.track);
             if (evt.track.kind == 'video') {
-                document.getElementById('video').srcObject = evt.streams[0];
-                document.getElementById('video').muted = false;
-                document.getElementById('video').play().catch(function () {});
+                var v = document.getElementById('video');
+                v.srcObject = gMediaStream;
+                // 自动播放策略：带声音首次可能被浏览器拦截（autoplay policy）。
+                // 先静音播放保证画面一定出现；首次用户交互时再开声。
+                v.muted = true;
+                v.play().then(tryUnmute).catch(function () {});
             } else {
-                document.getElementById('audio').srcObject = evt.streams[0];
+                document.getElementById('audio').srcObject = gMediaStream;
             }
         });
+
+        // 尝试开声：仅在 browser 已允许（用户已交互过）时成功，否则继续静音
+        function tryUnmute() {
+            var v = document.getElementById('video');
+            if (!v || !v.srcObject) return;
+            var hasAudio = v.srcObject.getTracks().some(function (t) { return t.kind === 'audio'; });
+            if (!hasAudio) return;
+            v.muted = false;
+            v.play().catch(function () {});
+        }
+        // 首次交互兜底：开声 + 若画面因拦截暂停则重播
+        function firstInteraction() {
+            tryUnmute();
+            var v = document.getElementById('video');
+            if (v && v.srcObject) v.play().catch(function () {});
+        }
+        document.addEventListener('click', firstInteraction, { once: true });
+        document.addEventListener('touchstart', firstInteraction, { once: true, passive: true });
+        document.addEventListener('keydown', firstInteraction, { once: true });
         // 发起连接前先静音，待轨道到来后自动播放
         document.getElementById('video').muted = true;
         negotiate();
@@ -313,8 +342,9 @@
         }
     }
 
-    window.onunload = function () { stopAvatars(); };
-    window.onbeforeunload = function () { stopAvatars(); };
+    // 用 pagehide/beforeunload 取代 onunload：新版浏览器禁用 unload(sync)，可避免权限策略告警
+    window.addEventListener('pagehide', function () { stopAvatars(); });
+    window.addEventListener('beforeunload', function () { stopAvatars(); });
 
     /* ==========================================================
      * 2. 文本输入（echo，直达 TTS）

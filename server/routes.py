@@ -233,7 +233,7 @@ async def admin_sessions(request):
 async def index(request):
     """默认首页重定向"""
     opt = request.app.get("opt")
-    pagename = 'index.html'
+    pagename = 'avatar-chat.html'
     if opt and opt.transport == 'rtmp':
         pagename = 'rtmpapi.html'
     elif opt and opt.transport == 'rtcpush':

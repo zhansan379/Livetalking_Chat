@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LiveTalking 后台管理</title>
+    <!-- 本地化依赖（web/lib）：完全离线可用 -->
+    <link href="lib/bootstrap.min.css" rel="stylesheet">
+    <link href="lib/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-bg: #f0f4fc;
+            --card-bg: rgba(255, 255, 255, 0.85);
+            --text-dark: #1e293b;
+            --text-muted: #64748b;
+            --accent-primary: #4361ee;
+            --accent-secondary: #3f37c9;
+            --danger-color: #ef4444;
+            --success-color: #10b981;
+            --warning-color: #d97706;
+            --glass-border: rgba(255, 255, 255, 0.4);
+            --border-radius: 16px;
+            --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+            background: linear-gradient(135deg, #e0eafc 0%, #cfdef3 100%);
+            color: var(--text-dark);
+            min-height: 100vh;
+            padding: 0;
+            margin: 0;
+        }
+
+        /* ── 顶部导航 ── */
+        .navbar {
+            background: var(--primary-gradient);
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+        }
+        .navbar-brand {
+            font-weight: 700;
+            color: #fff !important;
+            letter-spacing: 0.3px;
+        }
+        .nav-tabs {
+            border-bottom: none;
+            margin-top: 14px;
+        }
+        .nav-tabs .nav-link {
+            color: #fff;
+            background: rgba(255, 255, 255, 0.14);
+            border: 1px solid transparent;
+            border-radius: 999px;
+            padding: 8px 20px;
+            margin-right: 10px;
+            font-weight: 500;
+            font-size: 0.95rem;
+            transition: background 0.2s ease, transform 0.2s ease;
+        }
+        .nav-tabs .nav-link:hover { background: rgba(255, 255, 255, 0.26); }
+        .nav-tabs .nav-link.active {
+            background: #fff;
+            color: var(--accent-primary);
+            font-weight: 700;
+        }
+        .nav-tabs .nav-link i { margin-right: 6px; }
+
+        .container { max-width: 1200px; padding-top: 20px; padding-bottom: 40px; }
+
+        /* ── 玻璃卡片 ── */
+        .glass-card {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--border-radius);
+            box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.1);
+        }
+
+        .card-header {
+            background: transparent;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+            padding: 18px 22px;
+            font-weight: 700;
+            font-size: 1.05rem;
+            display: flex;
+            align-items: center;
+        }
+        .card-header i { margin-right: 10px; color: var(--accent-primary); }
+        .card-body { padding: 22px; }
+
+        .refresh-spinner {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-left: auto;
+        }
+        .spin { animation: rotation 1s linear infinite; }
+        @keyframes rotation { from { transform: rotate(0deg); } to { transform: rotate(359deg); } }
+
+        /* ── 生成任务 ── */
+        .btn-submit {
+            background: var(--primary-gradient);
+            border: none;
+            color: white;
+            padding: 12px;
+            font-weight: 600;
+            border-radius: 10px;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+        }
+        .btn-submit:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(118, 75, 162, 0.4);
+            color: white;
+        }
+
+        .param-group {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 12px;
+        }
+
+        .task-item {
+            border-bottom: 1px solid #eee;
+            padding: 14px 0;
+        }
+        .task-item:last-child { border-bottom: none; }
+
+        .badge-status {
+            font-size: 0.75rem;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-weight: 600;
+        }
+        .status-pending   { background: #ffeaa7; color: #b45309; }
+        .status-running   { background: #bae6fd; color: #0284c7; }
+        .status-completed { background: #a7f3d0; color: #059669; }
+        .status-failed    { background: #fecaca; color: #dc2626; }
+
+        .task-list-scroll { max-height: 560px; overflow-y: auto; }
+
+        /* ── 控制台 ── */
+        .config-table th {
+            color: var(--text-muted);
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.82rem;
+            letter-spacing: 0.5px;
+            border-bottom: 2px solid rgba(0, 0, 0, 0.05);
+        }
+        .config-table td {
+            font-weight: 500;
+            color: var(--text-dark);
+            vertical-align: middle;
+            word-break: break-all;
+        }
+
+        .session-card {
+            padding: 18px;
+            margin-bottom: 16px;
+            border-left: 5px solid var(--accent-primary);
+        }
+        .session-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 12px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+        }
+        .session-id { font-size: 1.05rem; font-weight: 700; color: var(--accent-primary); }
+        .session-detail-item { margin-bottom: 6px; font-size: 0.9rem; }
+        .session-detail-item strong { color: var(--text-muted); font-weight: 500; margin-right: 6px; }
+
+        .badge-speaking  { background: rgba(16, 185, 129, 0.12); color: var(--success-color); }
+        .badge-silent    { background: rgba(100, 116, 139, 0.1); color: var(--text-muted); }
+        .badge-recording { background: rgba(239, 68, 68, 0.12); color: var(--danger-color); animation: pulse 2s infinite; }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+            70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+
+        .empty-state { text-align: center; padding: 36px 16px; color: var(--text-muted); }
+        .empty-state i { font-size: 2.6rem; color: #cbd5e1; margin-bottom: 12px; display: block; }
+
+        .skeleton {
+            background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+            background-size: 200% 100%;
+            animation: loading 1.5s infinite;
+            border-radius: 4px;
+            height: 20px;
+        }
+        @keyframes loading {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        pre.customopt {
+            max-height: 130px;
+            overflow-y: auto;
+            font-size: 0.72rem;
+            background: #f8f9fa;
+            border: 1px solid rgba(0,0,0,0.06);
+            border-radius: 8px;
+            padding: 10px;
+        }
+
+        .footer-hint { font-size: 0.8rem; color: var(--text-muted); text-align: center; margin-top: 26px; }
+    </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark">
+    <div class="container-fluid px-4">
+        <a class="navbar-brand" href="#"><i class="bi bi-person-bounding-box me-2"></i>LiveTalking 后台管理</a>
+        <ul class="nav nav-tabs" id="mainTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="gen-tab" data-bs-toggle="tab" data-bs-target="#genPane" type="button" role="tab">
+                    <i class="bi bi-plus-circle-fill"></i>生成任务
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="console-tab" data-bs-toggle="tab" data-bs-target="#consolePane" type="button" role="tab">
+                    <i class="bi bi-speedometer2"></i>控制台
+                </button>
+            </li>
+        </ul>
+        <button class="btn btn-sm btn-outline-light ms-2" onclick="refreshConsole()">
+            <i class="bi bi-arrow-clockwise"></i><span class="d-none d-sm-inline"> 刷新</span>
+        </button>
+    </div>
+</nav>
+
+<div class="container">
+    <div class="tab-content" id="mainTabContent">
+
+        <!-- ============ Tab 1：生成任务 ============ -->
+        <div class="tab-pane fade show active" id="genPane" role="tabpanel">
+            <div class="row g-4">
+                <!-- 创建任务 -->
+                <div class="col-lg-5">
+                    <div class="glass-card">
+                        <div class="card-header">
+                            <i class="bi bi-plus-circle-fill"></i> 创建新生成任务
+                        </div>
+                        <div class="card-body">
+                            <form id="taskForm" enctype="multipart/form-data">
+                                <div class="mb-3">
+                                    <label class="form-label">算法模型</label>
+                                    <select class="form-select" name="model" id="modelSelect" required>
+                                        <option value="wav2lip">Wav2Lip</option>
+                                        <option value="musetalk">MuseTalk</option>
+                                    </select>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Avatar ID</label>
+                                    <input type="text" class="form-control" name="avatar_id" placeholder="如: wav2lip256_test" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">视频文件</label>
+                                    <input type="file" class="form-control" name="video_file" accept="video/*" required>
+                                </div>
+
+                                <div class="mb-3">
+                                    <a class="text-decoration-none link-primary" data-bs-toggle="collapse" href="#advancedParams" role="button">
+                                        <i class="bi bi-gear me-1"></i>高级参数 (可选)
+                                    </a>
+                                    <div class="collapse mt-2" id="advancedParams">
+                                        <div class="param-group">
+                                            <div class="row">
+                                                <div class="col-6 mb-2">
+                                                    <label class="form-label small">图像大小</label>
+                                                    <input type="number" class="form-control form-control-sm" name="img_size" value="256">
+                                                </div>
+                                                <div class="col-6 mb-2">
+                                                    <label class="form-label small">BBox Shift (musetalk)</label>
+                                                    <input type="number" class="form-control form-control-sm" name="bbox_shift" value="0">
+                                                </div>
+                                            </div>
+                                            <div class="row">
+                                                <div class="col-6 mb-2">
+                                                    <label class="form-label small">Pads (上下左右)</label>
+                                                    <input type="text" class="form-control form-control-sm" name="pads" value="0 10 0 0" placeholder="0 10 0 0">
+                                                </div>
+                                                <div class="col-6 mb-2">
+                                                    <label class="form-label small">人脸检测批大小</label>
+                                                    <input type="number" class="form-control form-control-sm" name="face_det_batch_size" value="4">
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <button type="submit" class="btn btn-submit mt-1" id="submitBtn">
+                                    <i class="bi bi-cloud-arrow-up-fill me-2"></i>提交生成任务
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 任务列表 -->
+                <div class="col-lg-7">
+                    <div class="glass-card">
+                        <div class="card-header">
+                            <i class="bi bi-list-task"></i> 任务列表
+                            <span class="refresh-spinner" id="refreshInfo">
+                                <i class="bi bi-arrow-repeat spin"></i> 自动更新中...
+                            </span>
+                        </div>
+                        <div class="card-body">
+                            <div class="task-list-scroll" id="taskList">
+                                <div class="text-center py-5 text-muted">
+                                    <div class="spinner-border spinner-border-sm me-2"></div>正在加载任务列表...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============ Tab 2：控制台 ============ -->
+        <div class="tab-pane fade" id="consolePane" role="tabpanel">
+            <div class="row g-4">
+                <!-- 全局配置 -->
+                <div class="col-lg-5">
+                    <div class="glass-card h-100">
+                        <div class="card-header">
+                            <i class="bi bi-gear-fill"></i> 全局配置
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-borderless config-table" id="configTable">
+                                    <tbody>
+                                        <tr><th>加载中...</th><td><div class="skeleton"></div></td></tr>
+                                        <tr><th>加载中...</th><td><div class="skeleton"></div></td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 活跃会话 -->
+                <div class="col-lg-7">
+                    <div class="glass-card">
+                        <div class="card-header">
+                            <i class="bi bi-people-fill text-success"></i> 活跃会话
+                            <span class="badge bg-primary ms-2 rounded-pill" id="sessionCount">0</span>
+                        </div>
+                        <div class="card-body" id="sessionsContainer">
+                            <div class="session-card glass-card">
+                                <div class="skeleton mb-3" style="width: 40%; height: 26px;"></div>
+                                <div class="skeleton mb-2" style="width: 80%;"></div>
+                                <div class="skeleton" style="width: 60%;"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <div class="footer-hint">
+        <i class="bi bi-info-circle me-1"></i>接口：/api/avatar/*（生成任务）、/api/admin/*（控制台）
+    </div>
+</div>
+
+<script src="lib/bootstrap.bundle.min.js"></script>
+<script src="lib/jquery-2.1.1.min.js"></script>
+<script>
+/* ==========================================================
+ *  生成任务 Tab
+ * ========================================================== */
+const $form = $('#taskForm'), $submit = $('#submitBtn'), $taskList = $('#taskList');
+
+$form.on('submit', async (e) => {
+    e.preventDefault();
+    $submit.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-2"></span>正在上传并创建任务...');
+    try {
+        const res = await fetch('/api/avatar/task', { method: 'POST', body: new FormData($form[0]) });
+        const r = await res.json();
+        if (r.code === 0) {
+            toast('任务提交成功! Task ID: ' + r.data.task_id, true);
+            $form[0].reset();
+            refreshTasks();
+        } else {
+            toast('提交失败: ' + r.msg, false);
+        }
+    } catch (err) {
+        toast('提交发生网络错误', false);
+    } finally {
+        $submit.prop('disabled', false).html('<i class="bi bi-cloud-arrow-up-fill me-2"></i>提交生成任务');
+    }
+});
+
+async function refreshTasks() {
+    try {
+        const res = await fetch('/api/avatar/tasks');
+        const r = await res.json();
+        if (r.code === 0) renderTasks(r.data.tasks);
+    } catch (err) { /* 忽略瞬时错误 */ }
+}
+
+const STATUS_LABEL = {
+    pending: '排队中', running: '生成中', completed: '已完成', failed: '失败'
+};
+
+function renderTasks(tasks) {
+    if (!tasks || !tasks.length) {
+        $taskList.html('<div class="empty-state"><i class="bi bi-inbox"></i><h5>暂无任务</h5><p>提交上方表单即可开始生成数字人。</p></div>');
+        return;
+    }
+    let html = '';
+    tasks.forEach(t => {
+        const date = t.start_time ? new Date(t.start_time * 1000).toLocaleString() : '-';
+        const sc = 'status-' + t.status;
+        const label = STATUS_LABEL[t.status] || t.status.toUpperCase();
+        html += `
+        <div class="task-item">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <div>
+                    <div class="fw-bold small text-primary"># ${t.task_id}</div>
+                    <div class="small text-muted mt-1">
+                        <span class="badge bg-secondary me-1">${t.model_type}</span>
+                        <span class="me-1">Avatar: <b>${t.avatar_id}</b></span>
+                        ${t.notify_url ? '<span class="badge bg-info text-dark">通知</span>' : ''}
+                    </div>
+                </div>
+                <div class="text-end">
+                    <span class="badge-status ${sc}">${label}</span>
+                    <div class="small text-muted mt-1" style="font-size:0.7rem;">${date}</div>
+                </div>
+            </div>
+            ${t.status !== 'completed' ? `
+            <div class="progress" style="height:10px;">
+                <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar"
+                     style="width:${t.progress}%" aria-valuenow="${t.progress}" aria-valuemin="0" aria-valuemax="100">${t.progress}%</div>
+            </div>` : ''}
+            ${t.error_msg ? `<div class="alert alert-danger p-2 mt-2 small mb-0">${t.error_msg}</div>` : ''}
+            ${t.status === 'pending' ? `
+            <div class="d-flex justify-content-end mt-2">
+                <button class="btn btn-sm btn-outline-danger" onclick="deleteTask('${t.task_id}')">
+                    <i class="bi bi-trash"></i> 取消任务
+                </button>
+            </div>` : ''}
+        </div>`;
+    });
+    $taskList.html(html);
+}
+
+async function deleteTask(taskId) {
+    if (!confirm('确定要取消此 Pending 任务吗?')) return;
+    try {
+        const res = await fetch('/api/avatar/task/' + taskId, { method: 'DELETE' });
+        const r = await res.json();
+        r.code === 0 ? toast('已取消任务', true) : toast(r.msg, false);
+        refreshTasks();
+    } catch (err) { toast('删除请求失败', false); }
+}
+
+/* ==========================================================
+ *  控制台 Tab
+ * ========================================================== */
+const configLabels = {
+    'model': '数字人模型',
+    'avatar_id': '默认角色 ID',
+    'tts': 'TTS 引擎',
+    'REF_FILE': '语音参考',
+    'transport': '流媒体协议',
+    'listenport': '监听端口',
+    'batch_size': '推理批次 (Batch)',
+    'fps': '视频帧率 (FPS)',
+    'push_url': '推流地址'
+};
+
+async function fetchConfig() {
+    try {
+        const res = await fetch('/api/admin/config');
+        const r = await res.json();
+        if (r.code === 0) renderConfig(r.data.config);
+    } catch (err) { /* 忽略 */ }
+}
+
+async function fetchSessions() {
+    try {
+        const res = await fetch('/api/admin/sessions');
+        const r = await res.json();
+        if (r.code === 0) {
+            $('#sessionCount').text(r.data.sessions.length);
+            renderSessions(r.data.sessions);
+        }
+    } catch (err) { /* 忽略 */ }
+}
+
+function renderConfig(config) {
+    const $tbody = $('#configTable tbody');
+    $tbody.empty();
+    for (const [k, label] of Object.entries(configLabels)) {
+        if (config[k] === undefined) continue;
+        const val = config[k] === '' || config[k] === null
+            ? '<span class="text-muted">未设置</span>'
+            : (typeof config[k] === 'object' ? JSON.stringify(config[k]) : config[k]);
+        $tbody.append(`<tr><th>${label}</th><td>${val}</td></tr>`);
+    }
+    if (!$tbody.children().length) {
+        $tbody.append('<tr><td colspan="2" class="text-muted">暂无配置项</td></tr>');
+    }
+}
+
+function renderSessions(sessions) {
+    const $c = $('#sessionsContainer');
+    $c.empty();
+    if (!sessions.length) {
+        $c.append(`<div class="empty-state"><i class="bi bi-inbox"></i><h5>暂无活跃的会话连接</h5><p>当用户在前端发起连接时，此列表将自动更新。</p></div>`);
+        return;
+    }
+    sessions.forEach(s => {
+        const speak = s.speaking
+            ? '<span class="badge badge-speaking"><i class="bi bi-mic-fill"></i> 说话中</span>'
+            : '<span class="badge badge-silent"><i class="bi bi-mic-mute-fill"></i> 静音</span>';
+        const rec = s.recording
+            ? '<span class="badge badge-recording ms-2"><i class="bi bi-record-circle"></i> 录制中</span>' : '';
+        const custom = (s.customopt && s.customopt.length)
+            ? `<pre class="customopt">${JSON.stringify(s.customopt, null, 2)}</pre>`
+            : '<span class="text-muted">无</span>';
+        $c.append(`
+        <div class="session-card glass-card">
+            <div class="session-header">
+                <div>
+                    <span class="session-id">SID: ${s.sessionid}</span>
+                    <div class="mt-1 text-muted" style="font-size:0.82rem;">传输层: ${s.transport || '默认'}</div>
+                </div>
+                <div>${speak}${rec}</div>
+            </div>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="session-detail-item"><strong>角色ID:</strong> ${s.avatar_id}</div>
+                    <div class="session-detail-item"><strong>核心模型:</strong> ${s.model}</div>
+                </div>
+                <div class="col-md-6">
+                    <div class="session-detail-item"><strong>语音参考:</strong> ${s.REF_FILE}</div>
+                    <div class="session-detail-item mt-2"><strong>动作编排:</strong></div>
+                    <div class="mt-1">${custom}</div>
+                </div>
+            </div>
+        </div>`);
+    });
+}
+
+function refreshConsole() {
+    Promise.all([fetchConfig(), fetchSessions()]);
+}
+
+/* ==========================================================
+ *  轻量 Toast 提示（替代 alert，样式与页面一致）
+ * ========================================================== */
+function toast(msg, isOk) {
+    const $t = $('<div style="position:fixed;top:74px;left:50%;transform:translateX(-50%);z-index:2000;' +
+        'background:' + (isOk ? '#059669' : '#dc2626') + ';color:#fff;padding:10px 20px;border-radius:999px;' +
+        'box-shadow:0 6px 20px rgba(0,0,0,0.18);font-size:0.9rem;">' + msg + '</div>').appendTo('body');
+    setTimeout(() => $t.fadeOut(300, () => $t.remove()), 2600);
+}
+
+/* ==========================================================
+ *  初始化与定时刷新
+ * ========================================================== */
+$(function () {
+    refreshTasks();
+    refreshConsole();
+
+    // 生成任务：3s 轮询；控制台：5s 轮询（会话更新）
+    setInterval(refreshTasks, 3000);
+    setInterval(refreshSessionsOnly, 5000);
+});
+
+function refreshSessionsOnly() { fetchSessions(); }
+</script>
+</body>
+</html>
