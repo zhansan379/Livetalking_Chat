@@ -8,6 +8,9 @@
 
 ---
 
+<img width="2549" height="1191" alt="image" src="https://github.com/user-attachments/assets/359c0420-e716-4eec-b3e7-f85f62a6b51c" />
+
+
 ## ✨ 功能特性
 
 - **实时数字人对话**：浏览器 WebRTC 推拉流，数字人口型/动作实时合成
