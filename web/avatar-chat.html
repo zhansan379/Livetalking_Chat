@@ -84,6 +84,25 @@
             color: rgba(255, 255, 255, 0.55);
         }
 
+        /* 字幕浮层：底部 #bar 上方，居中半透明，不挡点击 */
+        #subtitle {
+            position: fixed;
+            left: 50%;
+            bottom: 96px;
+            transform: translateX(-50%);
+            z-index: 15;
+            max-width: 78vw;
+            padding: 8px 16px;
+            border-radius: 10px;
+            background: rgba(0, 0, 0, 0.55);
+            color: #fff;
+            font-size: 18px;
+            line-height: 1.5;
+            text-align: center;
+            word-break: break-word;
+            pointer-events: none;
+        }
+
         /* 设置弹窗 (藏起原 input text / Use STUN server / asr服务器地址) */
         #modal-mask {
             position: fixed;
@@ -177,6 +196,29 @@
             text-align: center;
             margin-top: 8px;
         }
+
+        /* 首次点击前的半透明遮罩：提示用户点击进入（点击后才建连、出声音） */
+        #start-mask {
+            position: fixed;
+            inset: 0;
+            z-index: 40;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.55);
+            cursor: pointer;
+        }
+        #start-mask .start-hint {
+            color: #fff;
+            font-size: 20px;
+            text-align: center;
+            line-height: 1.8;
+        }
+        #start-mask .start-hint .sub {
+            display: block;
+            font-size: 13px;
+            color: #b9c0cc;
+        }
     </style>
 </head>
 <body>
@@ -186,6 +228,7 @@
     <video id="video" autoplay playsinline muted="false"></video>
     <audio id="audio" autoplay="true"></audio>
     <input type="hidden" id="sessionid" value="0"/>
+    <div id="subtitle"></div>
 </div>
 
 <!-- 底部操作栏 -->
@@ -193,6 +236,7 @@
     <button id="btn-call" class="bar-btn" onclick="toggleVoice()">开启通话</button>
     <input id="msg" type="text" placeholder="语音识别结果 / 输入文字直接对话，回车发送" autocomplete="off"/>
     <button id="btn-fullscreen" class="bar-btn" onclick="toggleFullscreen()">⛶ 全屏</button>
+    <button id="btn-subtitle" class="bar-btn active" onclick="toggleSubtitle()">字幕 开</button>
     <button id="btn-settings" class="bar-btn" onclick="openSettings()">⚙ 设置</button>
 </div>
 
@@ -229,6 +273,11 @@
 
         <div id="call-status"></div>
     </div>
+</div>
+
+<!-- 首次点击前的半透明遮罩，点击后进入（建连 + 出声） -->
+<div id="start-mask">
+    <div class="start-hint">点击进入对话<span class="sub">点击后开启声音，可输入文字或语音交流</span></div>
 </div>
 
 <!-- 本地化依赖（web/lib/）：jquery + onnxruntime-web + ricky0123/vad-web，离线可用 -->
@@ -294,7 +343,8 @@
         document.addEventListener('keydown', firstInteraction, { once: true });
         // 发起连接前先静音，待轨道到来后自动播放
         document.getElementById('video').muted = true;
-        negotiate();
+        // 连接建立后 sessionid 才填入真实值，届时再开启字幕流（见 negotiate 成功回调）
+        negotiate().then(startSubtitle).catch(function () {});
     }
 
     function negotiate() {
@@ -389,6 +439,39 @@
         var b = document.getElementById('btn-call');
         b.textContent = callOn ? '关闭通话' : '开启通话';
         b.classList.toggle('active', callOn);
+    }
+
+    /* ==========================================================
+     * 2.5 字幕：订阅 /sse 流，随数字人朗读逐句显示当前句子
+     * ========================================================== */
+    var subtitleOn = true;      // 字幕开关
+    var subtitleES = null;      // /sse EventSource
+
+    function toggleSubtitle() {
+        subtitleOn = !subtitleOn;
+        var btn = document.getElementById('btn-subtitle');
+        var el = document.getElementById('subtitle');
+        if (subtitleOn) { startSubtitle(); el.style.display = 'block'; }
+        else { stopSubtitle(); el.style.display = 'none'; }
+        btn.textContent = subtitleOn ? '字幕 开' : '字幕 关';
+        btn.classList.toggle('active', subtitleOn);
+    }
+
+    function startSubtitle() {
+        if (subtitleES) subtitleES.close();   // 避免重复连接
+        subtitleES = new EventSource('/sse?sessionid=' + getSessionId());
+        subtitleES.onmessage = function (ev) {
+            var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+            // 只在朗读开始时更新字幕，end 保留最后一句直至被下一句覆盖
+            if (m && m.status === 'start' && m.text) {
+                document.getElementById('subtitle').textContent = m.text;
+            }
+        };
+        subtitleES.onerror = function () {};  // EventSource 自动重连，忽略
+    }
+
+    function stopSubtitle() {
+        if (subtitleES) { subtitleES.close(); subtitleES = null; }
     }
 
     function bargeInEnabled() {
@@ -647,17 +730,29 @@
         document.getElementById('asr-hint').textContent = "已自动检测为本地端点: " + protocol + host + "/api/asr";
         addresschange();
 
-        // 底栏输入框：回车发送文字
+        // 底栏输入框：回车发送文字，交给 LLM 对话回答（type: chat）
         $('#msg').on('keydown', function (e) {
             if (e.key === 'Enter') {
                 e.preventDefault();
-                sendText($(this).val().trim());
+                sendChat($(this).val().trim());
                 $(this).val('');
             }
         });
 
-        // 打开页面即自动连接数字人（全屏展示）
+        // 连接提前到页面加载：静音自动播放视频（浏览器策略允许无声自动播放），
+        // 同时在画面上盖半透明遮罩提示点击；首次点击隐藏遮罩并开声。
+        // 字幕流在连接建立后随之开启（见 startAvatars 内的 negotiate().then(startSubtitle)）。
         startAvatars();
+
+        // 首次点击（/触摸/按键）：隐藏遮罩。开声由 startAvatars 内的
+        // firstInteraction（首帧静音播放 + 点击后 tryUnmute）完成。
+        function dismissMask() {
+            var mask = document.getElementById('start-mask');
+            if (mask) mask.style.display = 'none';
+        }
+        document.addEventListener('click', dismissMask, { once: true });
+        document.addEventListener('touchstart', dismissMask, { once: true, passive: true });
+        document.addEventListener('keydown', dismissMask, { once: true });
     });
 </script>
 </body>
