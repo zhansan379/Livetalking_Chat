@@ -1,1 +1,166 @@
 # Livetalking_Chat
+
+基于 [lipku/LiveTalking](https://github.com/lipku/LiveTalking) 的实时数字人语音对话系统。浏览器端通过 WebRTC 接入，支持语音识别（ASR）、大模型对话（LLM）、语音合成（TTS）与数字人口型生成，实现与数字人的自然语音交互。
+
+- 前端：`web/avatar-chat.html`（全屏语音对话，内置浏览器端 VAD / ASR / WebRTC）
+- 后端：基于 `aiohttp` + `aiortc`，Python 3.12
+- 授权：Apache-2.0（继承上游 LiveTalking）
+
+---
+
+## ✨ 功能特性
+
+- **实时数字人对话**：浏览器 WebRTC 推拉流，数字人口型/动作实时合成
+- **多模态输入**：语音（浏览器端 VAD + ASR）/ 文本（回车直接发送）
+- **语音打断（插话）**：数字人说话时可开口打断（barge-in）
+- **本地 + 静默解锁自动播放**：先静音保证画面，首次交互后自动开声（`tryUnmute`）
+- **可插拔模型**：支持 `wav2lip` / `musetalk` / `ultralight` 数字人模型
+- **多 TTS 引擎**：edge-tts / gpt-sovits / cosyvoice / fishtts / tencent / doubao / indextts2 / azuretts / qwentts
+- **本地 ASR 端点**：可选集成 FunASR/SenseVoice（`/api/asr`），亦支持外部 FunASR 服务并带热词
+- **管理后台**：`web/admin.html` 查看全局配置与活跃会话
+- **多种推流方式**：WebRTC / RTMP / RTCPush / 虚拟摄像头（virtualcam）
+
+---
+
+## 🚀 快速开始（Windows）
+
+### 1. 创建虚拟环境
+
+```bat
+uv venv --python 3.12 .venv
+.venv\Scripts\activate.bat
+```
+
+或使用 `conda`：
+
+```bat
+conda create -n livetalking python=3.12
+conda activate livetalking
+```
+
+### 2. 安装依赖
+
+```bat
+pip install -r requirements.txt
+```
+
+> 可选本地 ASR：`requirements.txt` 已含 `funasr`、`modelscope`，若不需要可自行删除该行。
+
+### 3. 准备模型文件
+
+默认使用 `wav2lip` + 中文音色：
+
+| 文件 | 位置 | 说明 |
+| ---- | ---- | ---- |
+| `wav2lip256.pth` | `models/wav2lip.pth` | 嘴型同步模型，下载后重命名 |
+| `wav2lip256_avatar1.tar.gz` | `data/avatars/` | 数字人形象，解压到 `data/avatars/` |
+
+### 4. 配置
+
+- 编辑 `config.yaml`（默认值，CLI 参数可覆盖）或改 `.env`（TTS/LLM 密钥）
+- `.env.example` 提供了所需的密钥占位：`TENCENT_*`、`DASHSCOPE_API_KEY`、`DOUBAO_API_KEY`
+
+### 5. 启动
+
+```bat
+run.bat
+```
+
+等价于：
+
+```bat
+python app.py --transport webrtc --model wav2lip --avatar_id wav2lip256_avatar1
+```
+
+浏览器打开：
+
+```
+http://<serverip>:8010/
+```
+
+> 使用 WebRTC 时，浏览器需能访问 STUN 服务器（默认 `stun:stun.freeswitch.org:3478`，可在 `config.yaml` 修改或页面内勾选 Use STUN server）。
+
+---
+
+## 🎭 支持的 avatar 模型
+
+| 模型 | `--model` | 说明 |
+| ---- | --- | ---- |
+| wav2lip | `wav2lip` | 嘴型同步，通用性强（默认） |
+| musetalk | `musetalk` | 更真实，依赖官方模型 |
+| ultralight | `ultralight` | 轻量化模型 |
+
+对应的数字人插件位于 `avatars/`，通过 `@register` 机制加载。
+
+---
+
+## 🌊 推流 / 传输方式
+
+`config.yaml` → `transport` 字段，或 CLI `--transport`：
+
+| 值 | 说明 |
+| --- | --- |
+| `webrtc` | 浏览器实时对话（默认，推荐） |
+| `rtmp` | 推流到 RTMP 服务器，需 `push_url` |
+| `rtcpush` | RTCPush 推流，需 `push_url` |
+| `virtualcam` | 渲染到虚拟摄像头，会话 0 |
+
+---
+
+## 🔌 HTTP API
+
+| 方法与路径 | 说明 |
+| ---- | ---- |
+| `POST /offer` | WebRTC SDP Offer / Answer |
+| `POST /human` | 文本输入（`type: echo`/`chat`），支持 `voice`/`emotion` |
+| `POST /humanaudio` | 上传音频驱动数字人 |
+| `POST /interrupt_talk` | 打断当前说话 |
+| `POST /set_audiotype` | 设置自定义动作编排 |
+| `POST /is_speaking` | 查询是否正在说话 |
+| `POST /record` | 开始/停止录制 |
+| `GET /sse` | SSE 事件流（服务器状态推送） |
+| `GET /record/{sessionid}` | 下载录制 MP4 |
+| `GET /api/asr` | 本地 ASR WebSocket 端点（需安装 funasr） |
+| `GET /api/admin/config` | 管理后台：全局配置 |
+| `GET /api/admin/sessions` | 管理后台：活跃会话 |
+
+---
+
+## 🗂️ 目录结构
+
+```
+app.py                       # 服务入口，路由注册、CORS、会话管理
+config.py                    # CLI 参数解析
+config.yaml                  # 配置文件（默认值）
+llm.py                       # 大模型对话接口
+registry.py                  # avatar 插件注册
+avatars/                     # 数字人模型插件（musetalk/wav2lip/ultralight）
+server/                      # 后端核心
+  ├─ routes.py               # HTTP/SSE 通用 API
+  ├─ webrtc.py               # WebRTC HumanPlayer
+  ├─ rtc_manager.py          # RTC 连接管理
+  ├─ session_manager.py      # 会话管理
+  ├─ avatar_routes.py        # avatar 生成路由
+  └─ asr_server.py           # 本地 ASR 端点
+web/                         # 前端
+  ├─ avatar-chat.html        # 全屏语音对话页（默认首页）
+  ├─ admin.html              # 管理后台
+  └─ lib/                    # 本地化依赖（jquery/onnxruntime/vad/bootstrap）
+data/                        # 数字人形象、录制、自定义动作
+models/                      # 模型权重
+tts/ streamout/ utils/       # TTS、输出、工具模块
+```
+
+---
+
+## 📚 TTS / LLM / ASR 密钥（`.env`）
+
+- `DASHSCOPE_API_KEY` — 通义千问 / CosyVoice 等
+- `DOUBAO_API_KEY` / `TENCENT_*` — 豆包 / 腾讯 TTS
+- 未配置对应密钥时，可退化为 edge-tts（免费在线合成，无需密钥）
+
+---
+
+## 📄 License
+
+[Apache-2.0](LICENSE) · Copyright (C) 2024 LiveTalking@lipku (https://github.com/lipku/LiveTalking)
