@@ -14,9 +14,11 @@
 ## ✨ 功能特性
 
 - **实时数字人对话**：浏览器 WebRTC 推拉流，数字人口型/动作实时合成
-- **多模态输入**：语音（浏览器端 VAD + ASR）/ 文本（回车直接发送）
+- **多模态输入**：语音（浏览器端 VAD + ASR）/ 文本（底栏输入框回车走 LLM 对话）
 - **语音打断（插话）**：数字人说话时可开口打断（barge-in）
-- **本地 + 静默解锁自动播放**：先静音保证画面，首次交互后自动开声（`tryUnmute`）
+- **静默解锁 + 首次点击遮罩**：加载即静音渲染画面，点击遮罩后开声（规避浏览器自动播放策略）
+- **逐句字幕**：订阅 `/sse` 流，随数字人朗读逐句显示，底部可「字幕 开/关」
+- **多轮对话记忆**：`agent/` 包持久化完整转录，超阈值后后台压缩为有界摘要，回复不阻塞
 - **可插拔模型**：支持 `wav2lip` / `musetalk` / `ultralight` 数字人模型
 - **多 TTS 引擎**：edge-tts / gpt-sovits / cosyvoice / fishtts / tencent / doubao / indextts2 / azuretts / qwentts
 - **本地 ASR 端点**：可选集成 FunASR/SenseVoice（`/api/asr`），亦支持外部 FunASR 服务并带热词
@@ -56,7 +58,8 @@ pip install -r requirements.txt
 | 文件 | 位置 | 说明 |
 | ---- | ---- | ---- |
 | `wav2lip256.pth` | `models/wav2lip.pth` | 嘴型同步模型，下载后重命名 |
-| `wav2lip256_avatar1.tar.gz` | `data/avatars/` | 数字人形象，解压到 `data/avatars/` |
+| `wav2lip256_avatar1.tar.gz` | `data/avatars/` | 数字人形象，解压到 `data/avatars/`（CLI 默认 `avatar_id`） |
+| `rem.tar.gz` | `data/avatars/rem/` | 中文音色形象，`run.bat` 默认使用（需 `rem/full_imgs`） |
 
 ### 4. 配置
 
@@ -69,10 +72,10 @@ pip install -r requirements.txt
 run.bat
 ```
 
-等价于：
+`run.bat` 等价于（默认模型 `wav2lip`、形象 `rem`，端口 8010）：
 
 ```bat
-python app.py --transport webrtc --model wav2lip --avatar_id wav2lip256_avatar1
+python app.py --transport webrtc --model wav2lip --avatar_id rem
 ```
 
 浏览器打开：
@@ -135,16 +138,22 @@ http://<serverip>:8010/
 app.py                       # 服务入口，路由注册、CORS、会话管理
 config.py                    # CLI 参数解析
 config.yaml                  # 配置文件（默认值）
-infra_ai/                    # LLM 调用基础设施（熔断/路由/限流/流式），取代原 llm.py
-server/routes.py             # API 路由 + chat 流式问答（消费 infra_ai）
+agent/                       # 多轮对话记忆（历史 JSON 持久化 + 有界摘要压缩）
+  ├─ agent.py                # ChatAgent：组装上下文、后台异步压缩
+  ├─ history.py              # 会话历史持久化
+  └─ agent_config.yaml       # 记忆/压缩阈值配置（system_prompt 等）
+infra_ai/                    # LLM 基础设施（熔断/路由/限流/流式/嵌入/重排），取代原 llm.py
+  ├─ config.yaml             # LLM 路由与模型配置（支持 ${ENV} 占位符）
+  └─ inference.py            # 推理核心 + 工具调用
 registry.py                  # avatar 插件注册
 avatars/                     # 数字人模型插件（musetalk/wav2lip/ultralight）
 server/                      # 后端核心
-  ├─ routes.py               # HTTP/SSE 通用 API
+  ├─ routes.py               # HTTP/SSE 通用 API + chat 流式问答（接线 agent + infra_ai）
   ├─ webrtc.py               # WebRTC HumanPlayer
   ├─ rtc_manager.py          # RTC 连接管理
   ├─ session_manager.py      # 会话管理
   ├─ avatar_routes.py        # avatar 生成路由
+  ├─ task_manager.py         # 后台任务管理
   └─ asr_server.py           # 本地 ASR 端点
 web/                         # 前端
   ├─ avatar-chat.html        # 全屏语音对话页（默认首页）
@@ -157,11 +166,20 @@ tts/ streamout/ utils/       # TTS、输出、工具模块
 
 ---
 
-## 📚 TTS / LLM / ASR 密钥（`.env`）
+## 💬 LLM 对话与多轮记忆
 
-- `DASHSCOPE_API_KEY` — 通义千问 / CosyVoice 等
-- `DOUBAO_API_KEY` / `TENCENT_*` — 豆包 / 腾讯 TTS
-- 未配置对应密钥时，可退化为 edge-tts（免费在线合成，无需密钥）
+文本/语音对话统一经 `infra_ai` 调用大模型：
+
+- **默认对话模型**：`infra_ai/config.yaml` 中 `routing.chat` 默认启用 bailian（`qwen-plus`，走 `DASHSCOPE_API_KEY`）；可改 `SF_CHAT_MODEL` / `SF_API_KEY` 切换 SiliconFlow 通道
+- **多轮记忆**：`agent/agent_config.yaml` 控制 `system_prompt` 与压缩阈值（`compress_threshold` / `keep_recent` / `target_summary_chars`），历史持久化到 JSON，回复期间后台异步压缩不阻塞
+- 键位占位（`.env`）：
+
+| 变量 | 用途 |
+| ---- | ---- |
+| `DASHSCOPE_API_KEY` | 百炼通话（默认对话模型）+ CosyVoice 等 |
+| `SF_API_KEY` | SiliconFlow 文本/视觉/嵌入通道 |
+| `DOUBAO_API_KEY` / `TENCENT_*` | 豆包 / 腾讯 TTS |
+| 未配置对应密钥 | TTS 退化为 edge-tts（免费在线合成）；对话需至少一种 LLM 通道 |
 
 ---
 
