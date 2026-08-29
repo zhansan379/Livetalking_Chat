@@ -26,6 +26,12 @@ _DEFAULT = {
             "enabled": True,
             "max_sources": 5,
         },
+        "weather": {
+            "enabled": True,
+            "forecast_base_url": "https://api.open-meteo.com",
+            "geocoding_base_url": "https://geocoding-api.open-meteo.com",
+            "coords": {},
+        },
     },
 }
 
@@ -64,6 +70,21 @@ class AgentConfig:
         self.tool_max_rounds: int = int(tools.get("max_rounds", 4) or 4)
         self.tool_web_search_enabled: bool = bool(ws.get("enabled", True))
         self.tool_web_search_max_sources: int = int(ws.get("max_sources", 5) or 5)
+
+        w_weather = tools.get("weather", {}) or {}
+        self.tool_weather_enabled: bool = bool(w_weather.get("enabled", False))
+        self.weather_forecast_base_url: str = w_weather.get(
+            "forecast_base_url", "https://api.open-meteo.com"
+        ) or "https://api.open-meteo.com"
+        self.weather_geocoding_base_url: str = w_weather.get(
+            "geocoding_base_url", "https://geocoding-api.open-meteo.com"
+        ) or "https://geocoding-api.open-meteo.com"
+        # 城市名(中文) → [纬度, 经度] 的补充/覆盖表；值需为 (lat, lon) 二元组
+        self.weather_coords: dict[str, tuple[float, float]] = {
+            name: (float(pt[0]), float(pt[1]))
+            for name, pt in (w_weather.get("coords") or {}).items()
+            if len(pt) >= 2
+        }
 
     @property
     def max_summary_tokens(self) -> int:

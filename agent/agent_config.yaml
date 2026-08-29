@@ -22,3 +22,10 @@ tools:
   web_search:
     enabled: true      # true→头像对话可联网搜索
     max_sources: 5     # 每次搜索最多返回几条结果
+  weather:
+    enabled: true      # true→天气问题用专用 Open-Meteo 实时接口（通用搜索查不准实时天气）
+    forecast_base_url: "https://api.open-meteo.com"          # 如需代理可改
+    geocoding_base_url: "https://geocoding-api.open-meteo.com"  # 如需代理可改
+    # 常用城市已有内置坐标；额外的「城市名(中文): [纬度, 经度]」可在此补充/覆盖
+    coords: {}
+    # 例： { "拉萨": [29.652, 91.172] }（把需要补充/覆盖的城市按此格式填）

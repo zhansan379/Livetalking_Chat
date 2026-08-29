@@ -13,6 +13,8 @@
 
 import asyncio
 import json
+import urllib.parse
+import urllib.request
 
 from utils.logger import logger
 
@@ -58,6 +60,146 @@ async def web_search(args: dict, cfg) -> str:
     return text
 
 
+# ─── 天气查询（Open-Meteo，免费免 key 的实时天气）───────────────────────
+#  Open-Meteo 返回结构化 JSON，比通用 web_search 的「历史网页摘要」可靠得多；
+#  适合「今天/现在某地天气」这类实时正交事实。天气问题优先走本工具。
+_WEATHER_FORECAST_BASE = "https://api.open-meteo.com"
+_WEATHER_GEOCODING_BASE = "https://geocoding-api.open-meteo.com"
+_HTTP_TIMEOUT = 15
+
+# 常见城市直接给坐标，省一次 geocoding 调用（可被 agent_config.yaml weather.coords 覆盖/补充）
+_DEFAULT_WEATHER_COORDS: dict[str, tuple[float, float]] = {
+    "北京": (39.9042, 116.4074),
+    "上海": (31.2304, 121.4737),
+    "广州": (23.1291, 113.2644),
+    "深圳": (22.5431, 114.0579),
+    "山西": (37.8570, 112.5624),  # 近似太原，省份查询给省会兜底
+    "太原": (37.8706, 112.5489),
+    "太原市": (37.8706, 112.5489),
+    "河北": (38.0428, 114.5149),
+    "石家庄": (38.0424, 114.5149),
+    "陕西": (34.3416, 108.9398),
+    "西安": (34.3416, 108.9398),
+    "山东": (36.6683, 117.0202),
+    "济南": (36.6512, 117.1201),
+    "河南": (34.7466, 113.6254),
+    "郑州": (34.7466, 113.6254),
+    "四川": (30.5728, 104.0668),
+    "成都": (30.5728, 104.0668),
+    "广东": (23.1291, 113.2644),
+    "武汉": (30.5928, 114.3055),
+    "杭州": (30.2741, 120.1551),
+    "南京": (32.0603, 118.7969),
+    "天津": (39.3434, 117.3616),
+    "重庆": (29.4316, 106.9123),
+}
+
+# WMO 天气码 → 中文天气现象（标准 0-99）
+_WMO_CODES: dict[int, str] = {
+    0: "晴", 1: "基本晴", 2: "多云", 3: "阴",
+    45: "雾", 48: "雾凇",
+    51: "毛毛雨（轻）", 53: "毛毛雨（中）", 55: "毛毛雨（大）",
+    56: "冻毛毛雨（轻）", 57: "冻毛毛雨（大）",
+    61: "小雨", 63: "中雨", 65: "大雨",
+    66: "冻雨（轻）", 67: "冻雨（重）",
+    71: "小雪", 73: "中雪", 75: "大雪", 77: "米雪",
+    80: "阵雨（轻）", 81: "阵雨（中）", 82: "阵雨（强）",
+    85: "阵雪（轻）", 86: "阵雪（大）",
+    95: "雷暴", 96: "雷暴伴冰雹", 99: "强雷暴伴冰雹",
+}
+
+
+def _http_get_json(url: str) -> dict:
+    """极简 GET + JSON 解析（标准库 urllib，无新依赖）。"""
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "LiveTalking/1.0 (weather tool)"},
+    )
+    with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
+        body = resp.read().decode("utf-8", errors="replace")
+    return json.loads(body)
+
+
+def _resolve_city(raw_city: str, cfg) -> tuple[float, float, str]:
+    """解析城市 → (lat, lon, 展示名)。先查内置坐标，未命中走 geocoding。"""
+    coords = dict(getattr(cfg, "weather_coords", {}) or {})
+    for name, pt in _DEFAULT_WEATHER_COORDS.items():
+        coords.setdefault(name, pt)
+
+    if raw_city in coords:
+        lat, lon = coords[raw_city]
+        return lat, lon, raw_city
+
+    gbase = getattr(cfg, "weather_geocoding_base_url", None) or _WEATHER_GEOCODING_BASE
+    url = (
+        f"{gbase}/v1/search?name={urllib.parse.quote(raw_city)}"
+        f"&count=1&language=zh&format=json"
+    )
+    loc = _http_get_json(url).get("results") or []
+    if not loc:
+        raise ValueError(f"未解析到 {raw_city} 的地理坐标")
+    first = loc[0]
+    name = first.get("name") or raw_city
+    admin1 = first.get("admin1") or ""
+    display = name if name == raw_city else f"{admin1 or ''} {name}".strip()
+    return float(first["latitude"]), float(first["longitude"]), display
+
+
+async def get_weather(args: dict, cfg) -> str:
+    """查询指定城市的实时天气，返回一段中文描述。"""
+    raw_city = (args or {}).get("city", "").strip()
+    if not raw_city:
+        return "（天气查询需要提供城市名，例如：北京、上海、太原、山西）"
+
+    def _run() -> str:
+        lat, lon, display = _resolve_city(raw_city, cfg)
+        fbase = getattr(cfg, "weather_forecast_base_url", None) or _WEATHER_FORECAST_BASE
+        url = (
+            f"{fbase}/v1/forecast?latitude={lat}&longitude={lon}"
+            "&current=temperature_2m,apparent_temperature,relative_humidity_2m,"
+            "precipitation,snowfall,weather_code,wind_speed_10m,is_day,cloud_cover"
+            "&daily=temperature_2m_max,temperature_2m_min&timezone=auto"
+        )
+        data = _http_get_json(url)
+        cur = data.get("current") or {}
+        daily = data.get("daily") or {}
+        today = daily.get("temperature_2m_max") or []
+        today = today[0] if today else None
+
+        code = int(cur.get("weather_code", 0) or 0)
+        wmo = _WMO_CODES.get(code, f"代码{code}")
+        temp = cur.get("temperature_2m")
+        feels = cur.get("apparent_temperature")
+        humid = cur.get("relative_humidity_2m")
+
+        parts = [f"{display}实时天气"]
+        if temp is not None:
+            line = f"当前{temp:g}℃"
+            if feels is not None:
+                line += f"（体感{feels:g}℃）"
+            if today is not None:
+                line += f"，今日最高{today} / 最低{daily['temperature_2m_min'][0]}℃"
+            parts.append(line)
+        parts.append(f"{'白天' if cur.get('is_day') else '夜晚'}，天气{wmo}")
+        if humid is not None:
+            parts.append(f"湿度{humid}%")
+        if cur.get("cloud_cover") is not None:
+            parts.append(f"云量{cur['cloud_cover']}%")
+        if cur.get("precipitation"):
+            parts.append(f"降水{cur['precipitation']}mm")
+        if cur.get("snowfall"):
+            parts.append(f"降雪{cur['snowfall']}cm")
+        if cur.get("wind_speed_10m"):
+            parts.append(f"{cur['wind_speed_10m']}km/h")
+        return "，".join(parts) + "。"
+
+    try:
+        return await asyncio.to_thread(_run)
+    except Exception as e:  # noqa: BLE001 - 天气失败要让模型自行处理，不中断对话
+        logger.warning("get_weather failed: %s", e)
+        return f"（天气查询失败：{e}）"
+
+
 # ─── 工具注册表：一个工具 = 一条 (schema + handler) ─────────────────────────
 TOOL_REGISTRY: dict[str, dict] = {
     "web_search": {
@@ -73,6 +215,21 @@ TOOL_REGISTRY: dict[str, dict] = {
             "required": ["query"],
         },
         "handler": web_search,
+    },
+    "weather": {
+        "description": (
+            "查询某个城市的实时天气（当前温度、体感、天气现象、湿度、风、"
+            "今日最高/最低温）。当用户问到今天/现在某地的天气，或天气变化、"
+            "是否下雨、冷不冷时调用。优先调用本工具，而不是 web_search。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "city": {"type": "string", "description": "城市名，中文即可，如：北京、上海、太原、山西"},
+            },
+            "required": ["city"],
+        },
+        "handler": get_weather,
     },
     # 以后新增工具：在这里加一个 entry，并在 agent_config.yaml 里加 tools.<name>.enabled
 }
