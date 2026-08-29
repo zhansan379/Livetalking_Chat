@@ -445,7 +445,11 @@
         <span id="call-label">开启通话</span>
     </button>
     <input id="msg" type="text" placeholder="语音识别结果 / 输入文字直接对话，回车发送" autocomplete="off"/>
-    <button id="btn-fullscreen" class="bar-btn" onclick="toggleFullscreen()" aria-label="全屏">
+    <button id="btn-upload" class="bar-btn" onclick="triggerUpload()" aria-label="上传文件" title="上传文件（如简历/岗位要求）">
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <span>上传文件</span>
+    </button>
+    <input id="file-input" type="file" hidden/>
         <svg class="ic" aria-hidden="true" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
         <span>全屏</span>
     </button>
@@ -929,6 +933,61 @@
             headers: { 'Content-Type': 'application/json' }, method: 'POST'
         }).catch(function (er) { console.error('ASR chat error:', er); });
     }
+
+    /* ==========================================================
+     * 文件上传（后端 POST /api/files/upload → data/uploads/<sessionid>/）
+     * ========================================================== */
+    var _toastEl = null;
+    function showToast(msg, isErr) {
+        if (!_toastEl) {
+            _toastEl = document.createElement('div');
+            _toastEl.style.cssText =
+                'position:fixed;left:50%;bottom:96px;transform:translateX(-50%);z-index:99;' +
+                'max-width:76vw;padding:10px 16px;border-radius:8px;color:#fff;font-size:14px;' +
+                'box-shadow:0 4px 14px rgba(0,0,0,.35);opacity:0;transition:opacity .25s;' +
+                'background:' + (isErr ? 'rgba(211,47,47,.92)' : 'rgba(20,30,40,.92)');
+            document.body.appendChild(_toastEl);
+        }
+        _toastEl.style.background = isErr ? 'rgba(211,47,47,.92)' : 'rgba(20,30,40,.92)';
+        _toastEl.textContent = msg;
+        _toastEl.style.opacity = '1';
+        clearTimeout(_toastEl._t);
+        _toastEl._t = setTimeout(function () { _toastEl.style.opacity = '0'; }, 5000);
+    }
+
+    function triggerUpload() {
+        var fi = document.getElementById('file-input');
+        fi.value = '';
+        fi.click();
+    }
+
+    // 监听文件选择 → 立即 POST 到通用上传路由；成功后提示返回的相对路径
+    document.addEventListener('change', function (evt) {
+        var fi = document.getElementById('file-input');
+        if (evt.target !== fi || !fi.files || !fi.files.length) return;
+        var file = fi.files[0];
+        var fd = new FormData();
+        fd.append('sessionid', getSessionId());
+        fd.append('file', file);
+        showToast('正在上传 ' + file.name + ' …', false);
+        fetch('/api/files/upload', { body: fd, method: 'POST' })
+            .then(function (r) { return r.json(); })
+            .then(function (resp) {
+                if (resp && resp.code === 0 && resp.data && resp.data.path) {
+                    var path = resp.data.path;
+                    showToast('已上传：' + path + '。可在对话里让我读取这个文件（如简历/岗位要求）。', false);
+                    // 顺带把相对路径填进输入框，方便直接用文字指代
+                    var msg = document.getElementById('msg');
+                    if (msg) { msg.value = path; msg.focus(); }
+                } else {
+                    showToast('上传失败：' + ((resp && resp.msg) || '未知错误'), true);
+                }
+            })
+            .catch(function (er) {
+                console.error('upload error:', er);
+                showToast('上传失败（网络或服务错误）', true);
+            });
+    });
 
     // 读取设置中的热词，转成 FunASR 期望的 {"热词":权重} JSON 字符串。
     // 与 asr/index.html（webrtcapi-asr 内嵌的 ASR 演示页）保持一致：
