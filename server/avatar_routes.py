@@ -1,24 +1,8 @@
 import os
-import json
 import uuid
-from aiohttp import web
 from server.task_manager import task_manager
+from server.responses import json_ok, json_error
 from utils.logger import logger
-
-def json_ok(data=None):
-    body = {"code": 0, "msg": "ok"}
-    if data is not None:
-        body["data"] = data
-    return web.Response(
-        content_type="application/json",
-        text=json.dumps(body),
-    )
-
-def json_error(msg: str, code: int = -1):
-    return web.Response(
-        content_type="application/json",
-        text=json.dumps({"code": code, "msg": str(msg)}),
-    )
 
 async def create_avatar_task(request):
     """

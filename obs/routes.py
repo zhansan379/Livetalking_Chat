@@ -1,27 +1,11 @@
 ###############################################################################
 #  /api/obs/* — 观测数据 REST 端点。注册进 server/routes.setup_routes。
-#  本地维护 json 响应助手，避免与 server.routes 循环 import。
+#  统一响应助手来自 server/responses.py（别名保留，调用点零改动）。
 ###############################################################################
 
-import json
-
-from aiohttp import web
+from server.responses import json_ok as _json_ok, json_error as _json_error
 
 from . import query
-
-
-def _json_ok(data=None) -> web.Response:
-    body = {"code": 0, "msg": "ok"}
-    if data is not None:
-        body["data"] = data
-    return web.Response(content_type="application/json", text=json.dumps(body, ensure_ascii=False))
-
-
-def _json_error(msg: str, code: int = -1) -> web.Response:
-    return web.Response(
-        content_type="application/json",
-        text=json.dumps({"code": code, "msg": str(msg)}, ensure_ascii=False),
-    )
 
 
 async def obs_summary(request):
