@@ -4,9 +4,31 @@
 
 import json
 import asyncio
+import re
 from aiohttp import web
 
 from utils.logger import logger
+
+
+# ─── 回答清洗：只保留纯文本与标点 ──────────────────────────────────────────
+# 组合一个「保留字符集」，其余一律剔除：过滤 emoji/表情符号、Markdown 记号
+# ( * _ # ` ) 以及箭头、几何、装饰等非文本字符，保证 TTS 只朗读纯文本与标点。
+_KEEP_RE = re.compile(
+    r"[一-鿿㐀-䶿぀-ヿ가-힯"  # 中日韩、假名、谚文
+    r"々〆〇"                                     # 々 〆 〇
+    r"A-Za-z0-9"                                             # 字母与数字
+    r"\s"
+    r"，。！？；：、（）《》〈〉「」『』【】—…·"
+    r",.!?;:()%\-+/<>'\""
+    r"]"
+)
+
+
+def _sanitize(text: str) -> str:
+    """把 LLM 回答清洗成纯文本+标点；若清洗后为空返回空串。"""
+    if not text:
+        return text
+    return "".join(_KEEP_RE.findall(text)).strip()
 
 
 # ─── 路由工具函数 ──────────────────────────────────────────────────────────
@@ -88,15 +110,17 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str, datainf
     reply = None
     if tools:
         final = await run_tool_loop(messages, tools, cfg)
+        final = _sanitize(final) if final else final
         if final:
             reply = final
             _feed_talk(avatar_session, final, datainfo)
         else:
-            logger.warning("tool loop returned None, use fallback phrase")
+            logger.warning("tool loop returned None/empty after sanitize, use fallback phrase")
             _feed_talk(avatar_session, _TOOL_FAIL_FALLBACK, datainfo)
     else:
         # 无启用工具 → 保留原有流式逐字消费。缓冲区跨 token 累积，
         # 按标点切句、超过 10 字即推送，末尾剩余部分补推。
+        # 推送前与收尾时统一过 _sanitize，保证朗读内容不含表情/markdown 字符。
         from infra_ai import async_stream_call_llm
         full_reply = []
         buf = ""
@@ -111,12 +135,16 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str, datainf
                         buf += token[lastpos:i + 1]
                         lastpos = i + 1
                         if len(buf) > 10:
-                            avatar_session.put_msg_txt(buf, datainfo)
+                            s = _sanitize(buf)
+                            if s:
+                                avatar_session.put_msg_txt(s, datainfo)
                             buf = ""
                 buf += token[lastpos:]
             if buf:
-                avatar_session.put_msg_txt(buf, datainfo)
-            reply = "".join(full_reply).strip()
+                s = _sanitize(buf)
+                if s:
+                    avatar_session.put_msg_txt(s, datainfo)
+            reply = _sanitize("".join(full_reply)).strip()
         except Exception as e:
             logger.exception("infra_ai chat exception: %s", e)
 

@@ -11,7 +11,7 @@ from utils.logger import logger
 _CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent_config.yaml")
 
 _DEFAULT = {
-    "system_prompt": "你是一个知识助手，尽量以简短、口语化的方式输出",
+    "system_prompt": "你是一个知识助手，尽量以简短、口语化的方式输出。只使用纯文本和正常的标点符号，不要使用任何表情符号/表情包、emoji、Markdown 记号（如 *、**、#、`、_）或其他特殊符号。",
     "memory": {
         "enabled": True,
         "compress_threshold": 10,

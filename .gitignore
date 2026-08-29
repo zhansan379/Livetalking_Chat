@@ -20,3 +20,5 @@ models/
 *.log
 dist
 .env
+
+logs/

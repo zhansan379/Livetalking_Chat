@@ -2,6 +2,8 @@
 #  ChatAgent：加载历史 + 组装上下文 + 有界压缩记忆 + 完整转录持久化
 ###############################################################################
 
+from datetime import datetime
+
 from utils.logger import logger
 from agent.config import get_agent_config
 from agent.history import load_history, save_history
@@ -34,6 +36,11 @@ class ChatAgent:
         self._last_compressed_index: int = last_idx
         self._messages: list[dict] = messages  # 完整转录，append-only
 
+    @staticmethod
+    def _today() -> str:
+        """当前日期（本地时区），用于提醒模型以之为时间基准。"""
+        return datetime.now().strftime("%Y-%m-%d %H:%M")
+
     # ─── 完整转录写入 ──────────────────────────────────────────────────────
     def add_user_message(self, content: str) -> None:
         self._messages.append({"role": "user", "content": content})
@@ -48,7 +55,10 @@ class ChatAgent:
         同步操作，不触发压缩。
         """
         cfg = self._config
-        msgs: list[dict] = [{"role": "system", "content": cfg.system_prompt}]
+        system = (
+            f"{cfg.system_prompt}\n今天的日期是 {self._today()}，回答涉及时间时以此为准。"
+        )
+        msgs: list[dict] = [{"role": "system", "content": system}]
         if self._summary:
             msgs.append({"role": "system", "content": f"<历史摘要>{self._summary}</历史摘要>"})
         recent = self._messages[-2 * cfg.keep_recent:]
