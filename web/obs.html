@@ -3,122 +3,292 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Agent 观测</title>
+    <title>Agent 观测 · LiveTalking</title>
     <!-- 本地化依赖（web/lib）：完全离线可用 -->
     <link href="lib/bootstrap.min.css" rel="stylesheet">
-    <link href="lib/bootstrap-icons.css" rel="stylesheet">
     <style>
         :root {
-            --primary-bg: #f0f4fc;
-            --card-bg: rgba(255, 255, 255, 0.85);
-            --text-dark: #1e293b;
-            --text-muted: #64748b;
-            --accent-primary: #4361ee;
-            --accent-secondary: #3f37c9;
-            --danger-color: #ef4444;
-            --success-color: #10b981;
-            --warning-color: #d97706;
-            --glass-border: rgba(255, 255, 255, 0.4);
-            --border-radius: 16px;
-            --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            /* ── 亮色主题（默认） ── */
+            --bg: #eef2f8;
+            --bg-2: #dde7f4;
+            --glow-a: rgba(13, 148, 136, .10);
+            --glow-b: rgba(2, 132, 199, .07);
+            --gridline: rgba(15, 23, 42, .04);
+            --border: rgba(15, 23, 42, .12);
+            --text: #17233a;
+            --muted: #5b6b81;
+            --accent: #0d9488;
+            --accent-ink: #ffffff;
+            --info: #0284c7;
+            --danger: #e11d48;
+            --ok: #059669;
+            --accent-2: #d97706;
+            --navbar-bg: rgba(255, 255, 255, .7);
+            --brand-fg: #111b2c;
+            --card-a: #ffffff;
+            --card-b: #f1f6fd;
+            --card-solid: #f6f9fe;
+            --code-bg: #eef4fb;
+            --code-fg: #26364c;
+            --shadow: 0 14px 40px -22px rgba(23, 51, 94, .28);
+            --row-hover: rgba(13, 148, 136, .06);
+            --empty-ico: #c5d1e1;
+            --skeleton-a: rgba(15, 23, 42, .07);
+            --skeleton-b: rgba(15, 23, 42, .13);
+            --ghost-fg: #33415a;
+            --ghost-border: rgba(15, 23, 42, .18);
+            --navlink-fg: #33415a;
+            --navlink-hover-bg: rgba(15, 23, 42, .06);
+            --pill-bg: rgba(2, 132, 199, .10);
+            --chip-muted-bg: #e8eef7;
+            --chip-muted-fg: #3f4f68;
+            --chip-info-bg: rgba(2, 132, 199, .12);
+            --chip-info-fg: #075985;
+            --badge-ok-bg: rgba(5, 150, 105, .13);
+            --badge-ok-fg: #047857;
+            --badge-fail-bg: rgba(225, 29, 72, .12);
+            --badge-fail-fg: #be123c;
+            --badge-warn-bg: rgba(217, 119, 6, .14);
+            --badge-warn-fg: #b45309;
+            --badge-run-bg: rgba(2, 132, 199, .13);
+            --badge-run-fg: #0369a1;
+            --badge-silent-bg: rgba(100, 116, 139, .14);
+            --badge-silent-fg: #526075;
+            --badge-rec-bg: rgba(225, 29, 72, .14);
+            --badge-rec-fg: #be123c;
+            --progress-track: rgba(2, 132, 199, .14);
+            --disc-fg: rgba(100, 116, 139, .6);
+            /* ECharts */
+            --chart-axis: #7b8aa0;
+            --chart-split: rgba(15, 23, 42, .08);
+            --chart-text: #223049;
+            --chart-tipbg: rgba(255, 255, 255, .98);
+            --chart-tipborder: rgba(15, 23, 42, .14);
         }
-        * { box-sizing: border-box; }
-        body {
-            font-family: 'Inter', system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-            background: linear-gradient(135deg, #e0eafc 0%, #cfdef3 100%);
-            color: var(--text-dark);
-            min-height: 100vh; margin: 0;
+        :root[data-theme="dark"] {
+            /* ── 暗色主题 ── */
+            --bg: #070b16;
+            --bg-2: #0b1220;
+            --glow-a: rgba(45, 212, 191, .10);
+            --glow-b: rgba(56, 189, 248, .08);
+            --gridline: rgba(148, 163, 184, .05);
+            --border: rgba(148, 163, 184, .14);
+            --text: #e6edf7;
+            --muted: #8ba0b6;
+            --accent: #2dd4bf;
+            --accent-ink: #062b26;
+            --info: #38bdf8;
+            --danger: #f43f5e;
+            --ok: #34d399;
+            --accent-2: #fbbf24;
+            --navbar-bg: rgba(7, 11, 22, .6);
+            --brand-fg: #ffffff;
+            --card-a: rgba(23, 34, 58, .6);
+            --card-b: rgba(13, 20, 38, .66);
+            --card-solid: #101a2e;
+            --code-bg: rgba(9, 15, 28, .6);
+            --code-fg: #bcd2e8;
+            --shadow: 0 14px 40px -18px rgba(0, 0, 0, .7);
+            --row-hover: rgba(45, 212, 191, .05);
+            --empty-ico: #33415a;
+            --skeleton-a: rgba(148, 163, 184, .08);
+            --skeleton-b: rgba(148, 163, 184, .16);
+            --ghost-fg: #cfe3f5;
+            --ghost-border: rgba(148, 163, 184, .35);
+            --navlink-fg: #cfe3f5;
+            --navlink-hover-bg: rgba(255, 255, 255, .12);
+            --pill-bg: rgba(255, 255, 255, .06);
+            --chip-muted-bg: #243047;
+            --chip-muted-fg: #cfe3f5;
+            --chip-info-bg: rgba(56, 189, 248, .16);
+            --chip-info-fg: #bfe6ff;
+            --badge-ok-bg: rgba(52, 211, 153, .14);
+            --badge-ok-fg: #5eead4;
+            --badge-fail-bg: rgba(244, 63, 94, .14);
+            --badge-fail-fg: #fda4af;
+            --badge-warn-bg: rgba(251, 191, 36, .14);
+            --badge-warn-fg: #fcd34d;
+            --badge-run-bg: rgba(56, 189, 248, .14);
+            --badge-run-fg: #bae6fd;
+            --badge-silent-bg: rgba(148, 163, 184, .12);
+            --badge-silent-fg: #9fb0c2;
+            --badge-rec-bg: rgba(244, 63, 94, .15);
+            --badge-rec-fg: #fda4af;
+            --progress-track: rgba(148, 163, 184, .12);
+            --disc-fg: rgba(148, 163, 184, .6);
+            --chart-axis: #7f93ab;
+            --chart-split: rgba(148, 163, 184, .10);
+            --chart-text: #e6edf7;
+            --chart-tipbg: rgba(11, 18, 32, .94);
+            --chart-tipborder: rgba(148, 163, 184, .25);
         }
-        .navbar {
-            background: var(--primary-gradient);
-            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
-        }
-        .navbar-brand { font-weight: 700; color: #fff !important; letter-spacing: 0.3px; }
-        .container { max-width: 1240px; padding-top: 22px; padding-bottom: 40px; }
 
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: var(--sans);
+            color: var(--text);
+            background:
+                radial-gradient(900px 480px at 78% -6%, var(--glow-a), transparent 60%),
+                radial-gradient(820px 420px at 6% 0%, var(--glow-b), transparent 55%),
+                linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+            min-height: 100vh;
+            margin: 0;
+            --sans: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+            --mono: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", menlo, monospace;
+        }
+        /* 底层网格纹理，营造“运维终端”质感 */
+        body::before {
+            content: "";
+            position: fixed; inset: 0; z-index: 0; pointer-events: none;
+            background-image:
+                linear-gradient(var(--gridline) 1px, transparent 1px),
+                linear-gradient(90deg, var(--gridline) 1px, transparent 1px);
+            background-size: 44px 44px;
+            mask-image: linear-gradient(180deg, rgba(0, 0, 0, .55), transparent 72%);
+            -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, .55), transparent 72%);
+        }
+        .container { position: relative; z-index: 1; max-width: 1240px; padding-top: 22px; padding-bottom: 44px; }
+
+        /* ── 顶部导航 ── */
+        .navbar {
+            background: var(--navbar-bg);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            border-bottom: 1px solid var(--border);
+        }
+        .navbar-brand { font-family: var(--mono); font-weight: 700; color: var(--brand-fg); letter-spacing: .4px; }
+        .navbar-brand svg { color: var(--accent); }
+        .btn-outline-light {
+            color: var(--ghost-fg); border-color: var(--ghost-border);
+            display: inline-flex; align-items: center; gap: 6px;
+            white-space: nowrap;
+        }
+        .btn-outline-light svg { width: 15px; height: 15px; flex: none; }
+        .btn-outline-light:hover { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+
+        /* ── 玻璃卡片 ── */
         .glass-card {
-            background: var(--card-bg);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid var(--glass-border);
-            border-radius: var(--border-radius);
-            box-shadow: 0 10px 30px -10px rgba(0,0,0,0.1);
+            background: linear-gradient(180deg, var(--card-a), var(--card-b));
+            border: 1px solid var(--border);
+            border-radius: var(--r, 14px);
+            box-shadow: var(--shadow);
+            position: relative;
+        }
+        .glass-card::after {
+            content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04);
         }
         .card-header {
-            background: transparent;
-            border-bottom: 1px solid rgba(0,0,0,0.06);
-            padding: 16px 20px;
-            font-weight: 700;
-            font-size: 1.02rem;
-            display: flex; align-items: center;
+            background: transparent; border-bottom: 1px solid var(--border);
+            padding: 15px 20px; font-weight: 700; font-size: .92rem;
+            display: flex; align-items: center; font-family: var(--mono); letter-spacing: .2px;
         }
-        .card-header i { margin-right: 9px; color: var(--accent-primary); }
+        .card-header svg { color: var(--accent); margin-right: 9px; flex-shrink: 0; }
         .card-body { padding: 18px 20px; }
 
         /* ── 指标卡片 ── */
-        .stat-card { text-align: center; padding: 20px 12px; height: 100%; }
-        .stat-value { font-size: 1.9rem; font-weight: 800; color: var(--accent-primary); line-height: 1.15; }
-        .stat-label { font-size: 0.82rem; color: var(--text-muted); margin-top: 6px; }
-        .stat-sub { font-size: 0.72rem; color: var(--text-muted); margin-top: 2px; }
-        .stat-card .bi { font-size: 1.2rem; color: var(--accent-secondary); }
+        .stat-card { --c: var(--accent); text-align: left; padding: 16px 18px; height: 100%; overflow: hidden; }
+        .stat-card::before {
+            content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+            background: var(--c); opacity: .85;
+        }
+        .stat-ico { position: absolute; right: 14px; top: 14px; width: 22px; height: 22px; color: var(--c); opacity: .9; }
+        .stat-label { font-size: .72rem; letter-spacing: .4px; text-transform: uppercase; color: var(--muted); font-family: var(--mono); }
+        .stat-value { font-size: 1.6rem; font-weight: 800; font-family: var(--mono); margin-top: 8px; color: var(--c); line-height: 1.1; }
+        .stat-sub { font-size: .74rem; color: var(--muted); margin-top: 6px; }
 
-        .chart-box { height: 300px; width: 100%; }
+        .chart-box { height: 300px; width: 100%; background: var(--code-bg); border-radius: 10px; }
 
         /* ── 请求表 ── */
-        .req-table { width: 100%; font-size: 0.88rem; }
+        .req-table { width: 100%; font-size: .86rem; }
         .req-table th {
-            color: var(--text-muted); font-weight: 600; text-transform: uppercase;
-            font-size: 0.76rem; letter-spacing: 0.4px; border-bottom: 2px solid rgba(0,0,0,0.06);
-            padding: 8px 10px; text-align: left; white-space: nowrap;
+            color: var(--muted); font-weight: 600; text-transform: uppercase;
+            font-size: .72rem; letter-spacing: .5px; border-bottom: 1px solid var(--border);
+            padding: 9px 10px; text-align: left; white-space: nowrap;
         }
-        .req-table td { padding: 9px 10px; border-bottom: 1px solid rgba(0,0,0,0.05); vertical-align: middle; }
+        .req-table td { padding: 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
         .req-table tbody tr.request-row { cursor: pointer; }
-        .req-table tbody tr.request-row:hover { background: rgba(67, 97, 238, 0.06); }
-        .req-table .msg-preview { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dark); }
+        .req-table tbody tr.request-row:hover { background: var(--row-hover); }
+        .req-table .msg-preview { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 
-        .badge-status { font-size: 0.72rem; padding: 3px 10px; border-radius: 20px; font-weight: 600; white-space: nowrap; }
-        .status-ok     { background: rgba(16,185,129,0.15); color: #059669; }
-        .status-fail   { background: rgba(239,68,68,0.12); color: #dc2626; }
-        .status-pending{ background: rgba(217,119,6,0.12); color: #b45309; }
+        .badge-status {
+            font-size: .7rem; padding: 3px 10px; border-radius: 20px; font-weight: 700;
+            white-space: nowrap; font-family: var(--mono); border: 1px solid transparent;
+        }
+        .status-ok     { background: var(--badge-ok-bg); color: var(--badge-ok-fg); border-color: var(--badge-ok-fg); }
+        .status-fail   { background: var(--badge-fail-bg); color: var(--badge-fail-fg); border-color: var(--badge-fail-fg); }
+        .status-pending{ background: var(--badge-warn-bg); color: var(--badge-warn-fg); border-color: var(--badge-warn-fg); }
 
         /* ── 展开 trace 时间线 ── */
-        .trace-detail { background: #f7f9fd; border-radius: 10px; padding: 12px 14px; }
+        .trace-detail { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; }
         .stage-label {
-            font-size: 0.74rem; font-weight: 700; color: var(--accent-secondary);
-            text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 2px 8px;
-            border-bottom: 1px solid rgba(0,0,0,0.08); margin-bottom: 8px;
+            font-size: .72rem; font-weight: 700; color: var(--accent); text-transform: uppercase;
+            letter-spacing: .6px; padding: 4px 2px 8px; border-bottom: 1px solid var(--border); margin-bottom: 8px;
         }
-        .trace-detail + .stage-label { margin-top: 14px; }
-        .span-line { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 0.84rem; border-bottom: 1px dashed rgba(0,0,0,0.06); }
+        .span-line { display: flex; align-items: center; gap: 11px; padding: 6px 0; font-size: .82rem; border-bottom: 1px dashed var(--border); }
         .span-line:last-child { border-bottom: none; }
-        .span-icon { width: 26px; text-align: center; font-size: 1rem; flex-shrink: 0; }
-        .span-name { font-weight: 600; color: var(--text-dark); }
-        .span-meta { color: var(--text-muted); font-size: 0.78rem; }
-        .span-ms { font-weight: 700; color: var(--accent-primary); margin-left: auto; white-space: nowrap; }
-        .arrow-indicator { color: var(--accent-secondary); font-size: 0.8rem; margin-left: 6px; transition: transform .15s; display: inline-block; }
+        .tl-icon { width: 21px; height: 21px; flex-shrink: 0; color: var(--info); }
+        .tl-icon.ok { color: var(--ok); }
+        .tl-icon.warn { color: var(--accent-2); }
+        .tl-icon.err { color: var(--danger); }
+        .tl-icon svg { width: 100%; height: 100%; }
+        .span-name { font-weight: 600; font-family: var(--mono); font-size: .82rem; }
+        .span-meta { color: var(--muted); font-size: .76rem; }
+        .span-ms { font-weight: 700; color: var(--accent); margin-left: auto; white-space: nowrap; font-family: var(--mono); }
+        .arrow-indicator { color: var(--disc-fg); transition: transform .15s; display: inline-flex; }
+        .arrow-indicator svg { width: 16px; height: 16px; }
 
-        .empty-state { text-align: center; padding: 30px 16px; color: var(--text-muted); }
-        .empty-state i { font-size: 2.4rem; color: #cbd5e1; margin-bottom: 10px; display: block; }
+        .empty-state { text-align: center; padding: 30px 16px; color: var(--muted); }
+        .empty-state svg { width: 34px; height: 34px; color: var(--empty-ico); margin-bottom: 10px; }
         .skeleton {
-            background: linear-gradient(90deg,#f0f0f0 25%,#e0e0e0 50%,#f0f0f0 75%);
+            background: linear-gradient(90deg, var(--skeleton-a) 25%, var(--skeleton-b) 50%, var(--skeleton-a) 75%);
             background-size: 200% 100%; animation: loading 1.5s infinite;
-            border-radius: 8px; height: 160px; padding: 14px;
+            border-radius: 8px; height: 150px;
         }
-        @keyframes loading { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+        @keyframes loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
-        .refresh-spinner { font-size: 0.8rem; color: var(--text-muted); margin-left: auto; font-weight: 400; }
-        .footer-hint { font-size: 0.8rem; color: var(--text-muted); text-align: center; margin-top: 26px; }
+        .refresh-spinner { font-size: .78rem; color: var(--muted); margin-left: auto; font-weight: 400; }
+        .refresh-spinner svg { vertical-align: -3px; margin-right: 4px; }
+        .footer-hint { font-size: .78rem; color: var(--muted); text-align: center; margin-top: 26px; font-family: var(--mono); }
+
+        /* ── Bootstrap 覆盖 ── */
+        .spin { animation: rotation 1s linear infinite; }
+        @keyframes rotation { from { transform: rotate(0deg); } to { transform: rotate(359deg); } }
+        a, .text-primary { color: var(--accent); }
+        .text-success { color: var(--ok) !important; }
+        .text-danger { color: var(--danger) !important; }
+        .text-muted, .text-secondary { color: var(--muted) !important; }
+        .badge.bg-primary { background: var(--accent) !important; color: var(--accent-ink); }
+        .badge.bg-secondary { background: var(--chip-muted-bg) !important; color: var(--chip-muted-fg); }
+        .badge.bg-info { background: var(--chip-info-bg) !important; color: var(--chip-info-fg); }
     </style>
 </head>
 <body>
 
 <nav class="navbar navbar-dark">
     <div class="container-fluid px-4">
-        <a class="navbar-brand" href="#"><i class="bi bi-activity me-2"></i>Agent 观测</a>
+        <a class="navbar-brand" href="#">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right:8px"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.48 12H2"/></svg>
+            Agent 观测
+        </a>
         <div class="d-flex align-items-center gap-2">
-            <a class="btn btn-sm btn-outline-light" href="/admin.html"><i class="bi bi-speedometer2"></i><span class="d-none d-sm-inline"> 后台</span></a>
-            <button class="btn btn-sm btn-outline-light" onclick="refreshAll()"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
-            <button class="btn btn-sm btn-outline-light" id="autoToggle" onclick="toggleAuto()"><i class="bi bi-play-fill"></i> 自动刷新</button>
+            <a class="btn btn-sm btn-outline-light" href="/admin.html">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg>
+                <span class="d-none d-sm-inline">后台</span>
+            </a>
+            <button class="btn btn-sm btn-outline-light" id="themeToggle" onclick="toggleTheme()" aria-label="切换主题">
+                <svg id="themeIco" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+                <span class="d-none d-sm-inline">暗色</span>
+            </button>
+            <button class="btn btn-sm btn-outline-light" onclick="refreshAll()">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
+                刷新
+            </button>
+            <button class="btn btn-sm btn-outline-light" id="autoToggle" onclick="toggleAuto()">
+                <svg id="autoIco" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+                自动刷新
+            </button>
         </div>
     </div>
 </nav>
@@ -137,8 +307,8 @@
 
     <!-- ═══════ 全链路阶段指标（ASR / TTS） ═══════ -->
     <div class="d-flex align-items-center mt-4 mb-2">
-        <i class="bi bi-diagram-3 me-2 text-primary"></i>
-        <span class="fw-bold">全链路阶段</span>
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-primary" style="margin-right:8px" aria-hidden="true"><circle cx="6" cy="5" r="3"/><circle cx="18" cy="19" r="3"/><path d="M6 8v8a4 4 0 0 0 4 4h2"/><path d="M18 16V8a4 4 0 0 0-4-4h-2"/><circle cx="6" cy="19" r="1.5"/><path d="M9 5h4"/><path d="M11 19h4"/></svg>
+        <span class="fw-bold" style="font-family:var(--mono)">全链路阶段</span>
         <span class="text-muted small ms-2">ASR → LLM / 工具 → TTS</span>
     </div>
     <div class="row g-3" id="stageCards">
@@ -156,19 +326,28 @@
     <div class="row g-3 mt-1">
         <div class="col-lg-4">
             <div class="glass-card h-100">
-                <div class="card-header"><i class="bi bi-grid-1x2-fill"></i> 响应耗时趋势 (ms)</div>
+                <div class="card-header">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 17V9"/><path d="M15 17V5"/></svg>
+                    响应耗时趋势 (ms)
+                </div>
                 <div class="card-body"><div id="chartTrend" class="chart-box"><div class="skeleton"></div></div></div>
             </div>
         </div>
         <div class="col-lg-4">
             <div class="glass-card h-100">
-                <div class="card-header"><i class="bi bi-robot"></i> 各模型平均耗时 (ms)</div>
+                <div class="card-header">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
+                    各模型平均耗时 (ms)
+                </div>
                 <div class="card-body"><div id="chartModel" class="chart-box"><div class="skeleton"></div></div></div>
             </div>
         </div>
         <div class="col-lg-4">
             <div class="glass-card h-100">
-                <div class="card-header"><i class="bi bi-pie-chart-fill"></i> 请求成功 / 失败</div>
+                <div class="card-header">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12a10 10 0 1 1-10-10"/><path d="M22 12A10 10 0 0 0 12 2"/><path d="M22 12h-10"/></svg>
+                    请求成功 / 失败
+                </div>
                 <div class="card-body"><div id="chartDonut" class="chart-box"><div class="skeleton"></div></div></div>
             </div>
         </div>
@@ -178,13 +357,19 @@
     <div class="row g-3 mt-1">
         <div class="col-lg-6">
             <div class="glass-card h-100">
-                <div class="card-header"><i class="bi bi-bar-chart-line"></i> 各阶段平均耗时 (ms)</div>
+                <div class="card-header">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" x2="12" y1="20" y2="10"/><line x1="18" x2="18" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="16"/></svg>
+                    各阶段平均耗时 (ms)
+                </div>
                 <div class="card-body"><div id="chartStage" class="chart-box"><div class="skeleton"></div></div></div>
             </div>
         </div>
         <div class="col-lg-6">
             <div class="glass-card h-100">
-                <div class="card-header"><i class="bi bi-graph-up-arrow"></i> TTS 合成成功率</div>
+                <div class="card-header">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4.5v14a2.5 2.5 0 0 1-5 0v-14a2.5 2.5 0 1 1 5 0z"/><path d="M21 4.5v14a2.5 2.5 0 0 1-5 0v-14a2.5 2.5 0 1 1 5 0z"/></svg>
+                    TTS 合成成功率
+                </div>
                 <div class="card-body"><div id="chartTTS" class="chart-box"><div class="skeleton"></div></div></div>
             </div>
         </div>
@@ -193,7 +378,8 @@
     <!-- ═══════ 最近请求 ═══════ -->
     <div class="glass-card mt-4">
         <div class="card-header">
-            <i class="bi bi-clock-history"></i> 最近请求 <span class="badge bg-primary ms-2 rounded-pill" id="reqCount">0</span>
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            最近请求 <span class="badge bg-primary ms-2 rounded-pill" id="reqCount">0</span>
             <span class="refresh-spinner" id="refreshInfo">手动刷新</span>
         </div>
         <div class="card-body">
@@ -203,13 +389,13 @@
                         <th>时间</th><th>会话</th><th>用户消息</th>
                         <th>响应耗时</th><th>全链路</th><th>状态</th><th>工具轮</th><th>LLM</th><th></th>
                     </tr></thead>
-                    <tbody id="reqBody"><tr><td colspan="9" class="empty-state"><i class="bi bi-inbox"></i>加载中...</td></tr></tbody>
+                    <tbody id="reqBody"><tr><td colspan="9" class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>加载中...</td></tr></tbody>
                 </table>
             </div>
         </div>
     </div>
 
-    <div class="footer-hint"><i class="bi bi-info-circle me-1"></i>接口：/api/obs/summary、/api/obs/requests、/api/obs/request/{trace_id}、/api/obs/pipeline</div>
+    <div class="footer-hint"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="16" y2="12"/><line x1="12" x2="12.01" y1="8" y2="8"/></svg>接口：/api/obs/summary、/api/obs/requests、/api/obs/request/{trace_id}、/api/obs/pipeline</div>
 </div>
 
 <script src="lib/jquery-2.1.1.min.js"></script>
@@ -217,14 +403,54 @@
 <script src="lib/echarts.min.js"></script>
 <script>
 /* ==========================================================
- *  观测面板：指标卡片 + 3 图 + 最近请求表(可展开 trace)
+ *  观测面板：指标卡片 + 5 图 + 最近请求表(可展开 trace)
  * ========================================================== */
+
+/* ---------- 内联 SVG 图标库（Lucide 风格，禁止 Emoji） ---------- */
+const IC = {
+    activity:'<path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.48 12H2"/>',
+    timer:'<line x1="10" x2="14" y1="2" y2="2"/><line x1="12" x2="15" y1="14" y2="11"/><circle cx="12" cy="14" r="8"/>',
+    clock:'<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+    layers:'<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+    gauge:'<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
+    bot:'<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
+    msg:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    hash:'<line x1="4" x2="20" y1="9" y2="9"/><line x1="4" x2="20" y1="15" y2="15"/><line x1="10" x2="8" y1="3" y2="21"/><line x1="16" x2="14" y1="3" y2="21"/>',
+    rocket:'<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>',
+    repeat:'<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
+    wrench:'<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
+    mic:'<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>',
+    volume:'<path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"/><path d="M16 9a5 5 0 0 1 0 6"/><path d="M19.364 18.364a9 9 0 0 0 0-12.728"/>',
+    check:'<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+    alertTri:'<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 20h16a2 2 0 0 0 1.73-2Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/>',
+    alert:'<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>',
+    chev:'<path d="m9 18 6-6-6-6"/>',
+    dot:'<circle cx="12" cy="12" r="4"/>',
+    sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
+    moon:'<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'
+};
+function svg(paths, extra) {
+    return '<svg class="' + (extra || '') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>';
+}
+
 let trendChart, modelChart, donutChart, stageChart, ttsChart;
 let POLL = 5000;
 let pollTimer = null;   // 自动刷新定时器
 let autoEnabled = false; // 自动刷新开关（默认关，需用户开启）
 
-const C_OK = '#10b981', C_FAIL = '#ef4444', C_ACC = '#4361ee', C_ACC2 = '#764ba2';
+const C_OK = '#059669', C_FAIL = '#e11d48', C_ACC = '#0d9488';
+const C_ACC2 = '#d97706', C_SKY = '#0284c7', C_ORG = '#ea580c';
+/* ECharts 调色板：随主题（CSS 变量）读取 */
+let PAL = { axis:'', split:'', theme:'', tiBg:'', tiBorder:'', donutBorder:'' };
+function syncPalette() {
+    const g = getComputedStyle(document.documentElement);
+    PAL.axis = g.getPropertyValue('--chart-axis').trim() || '#7b8aa0';
+    PAL.split = g.getPropertyValue('--chart-split').trim() || 'rgba(15,23,42,.08)';
+    PAL.theme = g.getPropertyValue('--chart-text').trim() || '#223049';
+    PAL.tiBg = g.getPropertyValue('--chart-tipbg').trim() || 'rgba(255,255,255,.98)';
+    PAL.tiBorder = g.getPropertyValue('--chart-tipborder').trim() || 'rgba(15,23,42,.14)';
+    PAL.donutBorder = g.getPropertyValue('--card-solid').trim() || '#ffffff';
+}
 
 function fmtMs(ms) {
     if (ms === null || ms === undefined) return '—';
@@ -247,17 +473,18 @@ function renderStats(s) {
     const pl = s.pipeline || {};
     const tk = s.total_tokens || {};
     const cells = [
-        { label: '成功率', value: (s.success_rate * 100).toFixed(1) + '%', sub: (s.success || 0) + ' / ' + (s.traces || 0) + ' 成功', color: C_OK },
-        { label: '平均响应', value: fmtMs(rt.avg), sub: '聊天段 trace_start→end', color: C_ACC },
-        { label: 'P50 / P90', value: fmtMs(rt.p50) + ' / ' + fmtMs(rt.p90), sub: '聊天响应分位', color: C_ACC },
-        { label: '全链路平均', value: fmtMs(pl.avg), sub: '全链路 P90 ' + fmtMs(pl.p90), color: '#0ea5e9' },
-        { label: 'LLM 调用', value: String(s.total_llm_calls || 0), sub: (s.tool_rounds || 0) + ' 轮工具 / ' + (s.total_tool_calls || 0) + ' 次', color: C_ACC2 },
-        { label: '总 Token', value: ((tk.total || 0) / 1000).toFixed(1) + 'k', sub: '入 ' + (tk.input || 0) + ' / 出 ' + (tk.output || 0), color: C_ACC2 },
+        { label: '成功率', value: (s.success_rate * 100).toFixed(1) + '%', sub: (s.success || 0) + ' / ' + (s.traces || 0) + ' 成功', color: C_OK, ico: 'activity' },
+        { label: '平均响应', value: fmtMs(rt.avg), sub: '聊天段 trace_start→end', color: C_ACC, ico: 'timer' },
+        { label: 'P50 / P90', value: fmtMs(rt.p50) + ' / ' + fmtMs(rt.p90), sub: '聊天响应分位', color: C_ACC, ico: 'clock' },
+        { label: '全链路平均', value: fmtMs(pl.avg), sub: '全链路 P90 ' + fmtMs(pl.p90), color: C_SKY, ico: 'layers' },
+        { label: 'LLM 调用', value: String(s.total_llm_calls || 0), sub: (s.tool_rounds || 0) + ' 轮工具 / ' + (s.total_tool_calls || 0) + ' 次', color: C_ACC2, ico: 'bot' },
+        { label: '总 Token', value: ((tk.total || 0) / 1000).toFixed(1) + 'k', sub: '入 ' + (tk.input || 0) + ' / 出 ' + (tk.output || 0), color: C_ACC2, ico: 'hash' },
     ];
     let html = cells.map(c => `
         <div class="col-6 col-md-3">
-            <div class="glass-card stat-card">
-                <div class="stat-value" style="color:${c.color}">${c.value}</div>
+            <div class="glass-card stat-card" style="--c:${c.color}">
+                <span class="stat-ico">${svg(IC[c.ico])}</span>
+                <div class="stat-value">${c.value}</div>
                 <div class="stat-label">${c.label}</div>
                 ${c.sub ? `<div class="stat-sub">${c.sub}</div>` : ''}
             </div>
@@ -270,19 +497,20 @@ function renderStageStats(s) {
     const asr = s.asr || {}, tts = s.tts || {};
     const asrRate = (asr.success_rate * 100).toFixed(1) + '%';
     const cells = [
-        { label: 'ASR 调用', value: String(asr.calls || 0), sub: '语音识别次数', color: '#0ea5e9' },
-        { label: 'ASR 成功率', value: asrRate, sub: (asr.calls || 0) + ' 次识别', color: C_OK },
-        { label: 'ASR 平均推理', value: fmtMs(asr.avg_ms), sub: '总音频 ' + fmtMs(asr.total_audio_ms), color: '#0ea5e9' },
-        { label: 'ASR 平均 RTF', value: (asr.avg_rtf || 0).toFixed(2) + 'x', sub: '实时率（<1 更快）', color: '#0ea5e9' },
-        { label: 'TTS 句子', value: String(tts.calls || 0), sub: '合成句数', color: '#f97316' },
-        { label: 'TTS 成功率', value: ((tts.success_rate || 0) * 100).toFixed(1) + '%', sub: '平均 ' + fmtMs(tts.avg_ms), color: C_OK },
-        { label: 'TTS 重试', value: String(tts.retry_count || 0), sub: '含失败重试', color: '#f97316' },
-        { label: 'TTS 截断', value: String(tts.truncation_count || 0), sub: '断流/过短', color: '#f97316' },
+        { label: 'ASR 调用', value: String(asr.calls || 0), sub: '语音识别次数', color: C_SKY, ico: 'mic' },
+        { label: 'ASR 成功率', value: asrRate, sub: (asr.calls || 0) + ' 次识别', color: C_OK, ico: 'check' },
+        { label: 'ASR 平均推理', value: fmtMs(asr.avg_ms), sub: '总音频 ' + fmtMs(asr.total_audio_ms), color: C_SKY, ico: 'timer' },
+        { label: 'ASR 平均 RTF', value: (asr.avg_rtf || 0).toFixed(2) + 'x', sub: '实时率（<1 更快）', color: C_SKY, ico: 'gauge' },
+        { label: 'TTS 句子', value: String(tts.calls || 0), sub: '合成句数', color: C_ORG, ico: 'msg' },
+        { label: 'TTS 成功率', value: ((tts.success_rate || 0) * 100).toFixed(1) + '%', sub: '平均 ' + fmtMs(tts.avg_ms), color: C_OK, ico: 'check' },
+        { label: 'TTS 重试', value: String(tts.retry_count || 0), sub: '含失败重试', color: C_ORG, ico: 'repeat' },
+        { label: 'TTS 截断', value: String(tts.truncation_count || 0), sub: '断流/过短', color: C_ORG, ico: 'alert' },
     ];
     const html = cells.map(c => `
         <div class="col-6 col-md-3">
-            <div class="glass-card stat-card">
-                <div class="stat-value" style="color:${c.color}">${c.value}</div>
+            <div class="glass-card stat-card" style="--c:${c.color}">
+                <span class="stat-ico">${svg(IC[c.ico])}</span>
+                <div class="stat-value">${c.value}</div>
                 <div class="stat-label">${c.label}</div>
                 ${c.sub ? `<div class="stat-sub">${c.sub}</div>` : ''}
             </div>
@@ -302,17 +530,23 @@ function ensureCharts() {
         stageChart.resize(); ttsChart.resize();
     });
 }
+/* 暗色 tooltip / 坐标轴 通用配置 */
+function tipStyle() {
+    return { backgroundColor: PAL.tiBg, borderColor: PAL.tiBorder, textStyle: { color: PAL.theme, fontSize: 12 } };
+}
+function axisLabel(color) { return { fontSize: 10, color: color || PAL.axis }; }
 
 function renderCharts(s, requests) {
     ensureCharts();
+    syncPalette();
     const reqs = (requests || []).slice().reverse(); // 变旧→新
     // 趋势折线
     trendChart.setOption({
-        grid: { left: 46, right: 16, top: 20, bottom: 30 },
-        tooltip: { trigger: 'axis' },
-        xAxis: { type: 'category', data: reqs.map(r => fmtTime(r.ts)), axisLabel: { fontSize: 10 } },
-        yAxis: { type: 'value', axisLabel: { fontSize: 10, formatter: v => v + 'ms' } },
-        legend: { bottom: 0, textStyle: { fontSize: 11 } },
+        grid: { left: 48, right: 16, top: 24, bottom: 34 },
+        tooltip: Object.assign({ trigger: 'axis' }, tipStyle()),
+        xAxis: { type: 'category', data: reqs.map(r => fmtTime(r.ts)), axisLabel: axisLabel(), axisLine: { lineStyle: { color: PAL.split } } },
+        yAxis: { type: 'value', axisLabel: Object.assign({ formatter: v => v + 'ms' }, axisLabel()), splitLine: { lineStyle: { color: PAL.split } } },
+        legend: { bottom: 0, textStyle: { fontSize: 11, color: PAL.axis } },
         series: [
             {
                 name: '响应耗时(聊天段)', type: 'line', smooth: true, symbol: 'circle', symbolSize: 6,
@@ -320,37 +554,38 @@ function renderCharts(s, requests) {
                 lineStyle: { color: C_ACC, width: 2 },
                 itemStyle: { color: C_ACC },
                 areaStyle: { color: { type: 'linear', x:0,y:0,x2:0,y2:1,
-                    colorStops: [{offset:0,color:'rgba(67,97,238,.28)'},{offset:1,color:'rgba(67,97,238,0)'}] } }
+                    colorStops: [{offset:0,color:'rgba(13,148,136,.28)'},{offset:1,color:'rgba(13,148,136,0)'}] } }
             },
             {
                 name: '全链路(ASR→TTS)', type: 'line', smooth: true, symbol: 'rect', symbolSize: 6,
                 data: reqs.map(r => r.pipeline_ms),
-                lineStyle: { color: '#0ea5e9', width: 2, type: 'dashed' },
-                itemStyle: { color: '#0ea5e9' }
+                lineStyle: { color: C_SKY, width: 2, type: 'dashed' },
+                itemStyle: { color: C_SKY }
             }
         ]
     }, true);
     // 各模型平均耗时柱状
     const models = s.per_model || [];
     modelChart.setOption({
-        grid: { left: 46, right: 16, top: 20, bottom: 40 },
-        tooltip: { trigger: 'axis' },
-        xAxis: { type: 'category', data: models.map(m => m.model), axisLabel: { fontSize: 9, interval: 0, rotate: 20 } },
-        yAxis: { type: 'value', axisLabel: { fontSize: 10, formatter: v => v + 'ms' } },
+        grid: { left: 48, right: 16, top: 20, bottom: 44 },
+        tooltip: Object.assign({ trigger: 'axis' }, tipStyle()),
+        xAxis: { type: 'category', data: models.map(m => m.model), axisLabel: Object.assign({ interval: 0, rotate: 20 }, axisLabel()), axisLine: { lineStyle: { color: PAL.split } } },
+        yAxis: { type: 'value', axisLabel: Object.assign({ formatter: v => v + 'ms' }, axisLabel()), splitLine: { lineStyle: { color: PAL.split } } },
         series: [{
             name: '平均耗时', type: 'bar', barMaxWidth: 46,
-            data: models.map(m => ({ value: m.avg_elapsed_ms, itemStyle: { color: C_ACC } })),
-            label: { show: true, position: 'top', fontSize: 9, formatter: p => p.value + 'ms' }
+            data: models.map(m => ({ value: m.avg_elapsed_ms, itemStyle: { color: C_ACC, borderRadius: [4,4,0,0] } })),
+            label: { show: true, position: 'top', fontSize: 9, color: PAL.axis, formatter: p => p.value + 'ms' }
         }]
     }, true);
     // 成功/失败环图
     const ok = s.success || 0, fail = (s.traces || 0) - ok;
     donutChart.setOption({
-        tooltip: { trigger: 'item', formatter: p => p.name + ': ' + p.value + ' (' + p.percent + '%)' },
-        legend: { bottom: 0, textStyle: { fontSize: 11 } },
+        tooltip: Object.assign({ trigger: 'item', formatter: p => p.name + ': ' + p.value + ' (' + p.percent + '%)' }, tipStyle()),
+        legend: { bottom: 0, textStyle: { fontSize: 11, color: PAL.axis } },
         series: [{
             type: 'pie', radius: ['46%', '68%'], center: ['50%', '44%'], avoidLabelOverlap: false,
-            label: { show: true, formatter: '{b}\n{d}%', fontSize: 11 },
+            label: { show: true, formatter: '{b}\n{d}%', fontSize: 11, color: PAL.theme },
+            itemStyle: { borderColor: PAL.donutBorder, borderWidth: 2 },
             data: [
                 { value: ok, name: '成功', itemStyle: { color: C_OK } },
                 { value: fail, name: '失败', itemStyle: { color: C_FAIL } }
@@ -364,19 +599,19 @@ function renderCharts(s, requests) {
         llmAvg = s.per_model.reduce((a, m) => a + (m.avg_elapsed_ms || 0) * (m.calls || 0), 0) / llmCalls;
     }
     const stageData = [
-        { name: 'ASR', value: (s.asr && s.asr.avg_ms) || 0, color: '#0ea5e9' },
+        { name: 'ASR', value: (s.asr && s.asr.avg_ms) || 0, color: C_SKY },
         { name: 'LLM', value: llmAvg, color: C_ACC },
-        { name: 'TTS', value: (s.tts && s.tts.avg_ms) || 0, color: '#f97316' },
+        { name: 'TTS', value: (s.tts && s.tts.avg_ms) || 0, color: C_ORG },
     ];
     stageChart.setOption({
-        grid: { left: 50, right: 16, top: 24, bottom: 24 },
-        tooltip: { trigger: 'axis', formatter: p => p[0].name + ' 平均: ' + fmtMs(p[0].value) },
-        xAxis: { type: 'category', data: stageData.map(d => d.name), axisLabel: { fontSize: 12 } },
-        yAxis: { type: 'value', axisLabel: { fontSize: 10, formatter: v => v + 'ms' } },
+        grid: { left: 52, right: 16, top: 26, bottom: 26 },
+        tooltip: Object.assign({ trigger: 'axis', formatter: p => p[0].name + ' 平均: ' + fmtMs(p[0].value) }, tipStyle()),
+        xAxis: { type: 'category', data: stageData.map(d => d.name), axisLabel: Object.assign({ fontSize: 12 }, axisLabel()), axisLine: { lineStyle: { color: PAL.split } } },
+        yAxis: { type: 'value', axisLabel: Object.assign({ formatter: v => v + 'ms' }, axisLabel()), splitLine: { lineStyle: { color: PAL.split } } },
         series: [{
             name: '平均耗时', type: 'bar', barMaxWidth: 64,
-            data: stageData.map(d => ({ value: Math.round(d.value), itemStyle: { color: d.color } })),
-            label: { show: true, position: 'top', fontSize: 10, formatter: p => p.value + 'ms' }
+            data: stageData.map(d => ({ value: Math.round(d.value), itemStyle: { color: d.color, borderRadius: [5,5,0,0] } })),
+            label: { show: true, position: 'top', fontSize: 10, color: PAL.theme, formatter: p => p.value + 'ms' }
         }]
     }, true);
     // TTS 合成成功率环图
@@ -384,10 +619,11 @@ function renderCharts(s, requests) {
     const ttsOk = Math.round(((s.tts && s.tts.success_rate) || 0) * ttsTotal);
     if (ttsTotal > 0) {
         ttsChart.setOption({
-            tooltip: { trigger: 'item', formatter: p => p.name + ': ' + p.value + ' (' + p.percent + '%)' },
+            tooltip: Object.assign({ trigger: 'item', formatter: p => p.name + ': ' + p.value + ' (' + p.percent + '%)' }, tipStyle()),
             series: [{
                 type: 'pie', radius: ['46%', '68%'], center: ['50%', '44%'], avoidLabelOverlap: false,
-                label: { show: true, formatter: '{b}\n{d}%', fontSize: 11 },
+                label: { show: true, formatter: '{b}\n{d}%', fontSize: 11, color: PAL.theme },
+                itemStyle: { borderColor: PAL.donutBorder, borderWidth: 2 },
                 data: [
                     { value: ttsOk, name: '成功', itemStyle: { color: C_OK } },
                     { value: ttsTotal - ttsOk, name: '失败', itemStyle: { color: C_FAIL } }
@@ -403,7 +639,7 @@ let expanded = {}; // trace_id -> 是否展开
 function renderRequests(requests) {
     const body = $('#reqBody');
     if (!requests.length) {
-        body.html('<tr><td colspan="9" class="empty-state"><i class="bi bi-inbox"></i>暂无请求，发送一句对话后自动出现。</td></tr>');
+        body.html('<tr><td colspan="9" class="empty-state">' + svg(IC.msg) + '暂无请求，发送一句对话后自动出现。</td></tr>');
         $('#reqCount').text(0);
         return;
     }
@@ -423,7 +659,7 @@ function renderRequests(requests) {
             <td><span class="badge-status status-${ok}">${label}</span></td>
             <td>${r.tool_rounds == null ? '—' : r.tool_rounds}</td>
             <td>${r.llm_calls == null ? '—' : r.llm_calls}</td>
-            <td><span class="arrow-indicator" style="transform:${arrow}"><i class="bi bi-chevron-right"></i></span></td>
+            <td><span class="arrow-indicator" style="transform:${arrow}">${svg(IC.chev)}</span></td>
         </tr>
         <tr class="trace-row" data-tid="${r.trace_id}" style="display:${expanded[r.trace_id] ? '' : 'none'}">
             <td colspan="9">${expanded[r.trace_id] ? '<div class="trace-detail">加载中...</div>' : ''}</td>
@@ -445,53 +681,81 @@ function loadTrace(tid) {
     fetch('/api/obs/request/' + tid).then(r => r.json()).then(j => {
         const evs = (j.data && j.data.events) || [];
         const html = renderTimeline(evs);
-        $('.trace-row[data-tid="' + tid + '"] .trace-detail').html(html || '<div class="empty-state">无事件</div>');
+        $('.trace-row[data-tid="' + tid + '"] .trace-detail').html(html || '<div class="empty-state">' + svg(IC.msg) + '无事件</div>');
     }).catch(() => {});
 }
 
 function renderTimeline(evs) {
-    if (!evs.length) return '<div class="empty-state">无事件</div>';
-    const icon = { trace_start:'🚀', llm_call:'🤖', tool_round:'🔁', tool_call:'🛠', trace_end:'✅', asr_call:'🎙', tts_call:'🗣' };
-    let lastRound = -1;
+    if (!evs.length) return '<div class="empty-state">' + svg(IC.msg) + '无事件</div>';
+    const ICON = { trace_start:'rocket', llm_call:'bot', tool_round:'repeat', tool_call:'wrench',
+                   trace_end:'check', asr_call:'mic', tts_call:'volume' };
     const lines = evs.map(ev => {
-        let iconC = icon[ev.type] || '·';
+        let key = ICON[ev.type] || 'dot';
+        let cls = '';
         let name = '', meta = '';
         if (ev.type === 'trace_start') { name = '请求开始'; meta = '工具模式: ' + (ev.tool_mode ? '开' : '关'); }
-        else if (ev.type === 'trace_end') { name = '请求结束'; meta = ev.fail_reason ? ('失败: ' + ev.fail_reason) : '成功'; }
+        else if (ev.type === 'trace_end') {
+            key = 'check'; name = '请求结束';
+            cls = ev.fail_reason ? 'err' : 'ok';
+            meta = ev.fail_reason ? ('失败: ' + ev.fail_reason) : '成功';
+        }
         else if (ev.type === 'llm_call') {
+            key = 'bot';
             name = 'LLM ' + (ev.mode === 'stream' ? '流式' : '调用');
             meta = `${ev.model || ev.route || '?'} · 入${ev.input_tokens||0}/出${ev.output_tokens||0}tok` +
-                   (ev.has_tools ? ' · tools' : '') + (ev.success ? '' : ' · ✗ ' + (ev.fail_reason||'失败'));
-            iconC = ev.success ? '🤖' : '❗';
+                   (ev.has_tools ? ' · tools' : '') + (ev.success ? '' : ' · ' + (ev.fail_reason||'失败'));
+            cls = ev.success ? '' : 'err';
         }
-        else if (ev.type === 'tool_round') { name = '工具轮 #' + ev.round; meta = ev.n_tool_calls + ' 次调用' + (ev.answered ? ' · 出答案' : ''); }
+        else if (ev.type === 'tool_round') { key = 'repeat'; name = '工具轮 #' + ev.round; meta = ev.n_tool_calls + ' 次调用' + (ev.answered ? ' · 出答案' : ''); }
         else if (ev.type === 'tool_call') {
+            key = 'wrench';
             name = '工具 ' + (ev.tool || '?');
-            meta = esc(ev.args ? ev.args.slice(0,60) : '') + (ev.success ? '' : ' · ✗ ' + esc(ev.error||'失败'));
+            meta = esc(ev.args ? ev.args.slice(0,60) : '') + (ev.success ? '' : ' · ' + esc(ev.error||'失败'));
             if (ev.result_snippet) meta += '  → ' + esc(ev.result_snippet.slice(0,60));
-            iconC = ev.success ? '🛠' : '⚠️';
+            cls = ev.success ? '' : 'err';
         }
         else if (ev.type === 'asr_call') {
+            key = 'mic';
             name = 'ASR 转录';
             meta = '推理 ' + fmtMs(ev.inference_ms) + ' · RTF ' + (ev.rtf || 0).toFixed(2) +
                    (ev.text ? '  → ' + esc(ev.text) : '') +
-                   (ev.success ? '' : ' · ✗ ' + esc(ev.fail_reason||'失败'));
-            iconC = ev.success ? '🎙' : '🤷';
+                   (ev.success ? '' : ' · ' + esc(ev.fail_reason||'失败'));
+            cls = ev.success ? '' : 'err';
         }
         else if (ev.type === 'tts_call') {
+            key = 'volume';
             name = 'TTS 合成';
             meta = (ev.provider ? esc(ev.provider) + ' · ' : '') + '音频 ' + fmtMs(ev.audio_ms) +
                    ' · 尝试 ' + (ev.attempts || 1) +
                    (ev.retried ? ' · 重试' : '') + (ev.truncated ? ' · 截断' : '') +
-                   (ev.success ? '' : ' · ✗ ' + esc(ev.fail_reason||'失败'));
-            iconC = ev.success ? '🗣' : '🔇';
+                   (ev.success ? '' : ' · ' + esc(ev.fail_reason||'失败'));
+            cls = ev.success ? '' : 'err';
         }
-        return `<div class="span-line"><span class="span-icon">${iconC}</span>
+        return `<div class="span-line"><span class="tl-icon ${cls}">${svg(IC[key] || IC.dot)}</span>
             <span class="span-name">${esc(name)}</span>
             <span class="span-meta">${meta}</span>
             ${ev.elapsed_ms != null ? `<span class="span-ms">${fmtMs(ev.elapsed_ms)}</span>` : ''}</div>`;
     });
     return lines.join('');
+}
+
+/* ---------- 主题切换 ---------- */
+function applyTheme() {
+    const saved = localStorage.getItem('lt-theme');
+    if (saved === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+    else document.documentElement.removeAttribute('data-theme'); // 默认亮色
+    refreshThemeIco();
+}
+function refreshThemeIco() {
+    const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+    $('#themeToggle').html(svg(dark ? IC.sun : IC.moon, 'themeIco') + '<span class="d-none d-sm-inline"> ' + (dark ? '亮色' : '暗色') + '</span>');
+}
+function toggleTheme() {
+    const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+    if (dark) { document.documentElement.removeAttribute('data-theme'); localStorage.setItem('lt-theme', 'light'); }
+    else { document.documentElement.setAttribute('data-theme', 'dark'); localStorage.setItem('lt-theme', 'dark'); }
+    refreshThemeIco();
+    refreshAll(); // 重新读取调色板并重绘图表
 }
 
 /* ---------- 刷新 / 自动刷新 ---------- */
@@ -502,12 +766,12 @@ function toggleAuto() {
     const btn = $('#autoToggle');
     if (autoEnabled) {
         btn.removeClass('btn-outline-light').addClass('btn-primary active');
-        btn.html('<i class="bi bi-pause-fill"></i> 停止自动刷新');
-        $('#refreshInfo').html('<i class="bi bi-arrow-repeat spin"></i> 自动刷新中（5s）');
+        btn.html(svg('<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>', 'autoIco') + ' 停止自动刷新');
+        $('#refreshInfo').html(svg(IC.repeat, 'spin') + ' 自动刷新中（5s）');
         pollTimer = setInterval(refreshAll, POLL);
     } else {
         btn.addClass('btn-outline-light').removeClass('btn-primary active');
-        btn.html('<i class="bi bi-play-fill"></i> 自动刷新');
+        btn.html(svg('<polygon points="6 3 20 12 6 21 6 3"/>', 'autoIco') + ' 自动刷新');
         $('#refreshInfo').text('手动刷新');
         if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     }
@@ -534,8 +798,9 @@ async function refreshAll() {
 }
 
 $(function () {
-    $('#refreshInfo').text('手动刷新');   // 默认关闭自动刷新
-    refreshAll();                          // 进入时拉取一次
+    applyTheme();                            // 应用已保存主题（默认亮色）
+    $('#refreshInfo').text('手动刷新');       // 默认关闭自动刷新
+    refreshAll();                             // 进入时拉取一次
 });
 </script>
 </body>
