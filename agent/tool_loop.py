@@ -12,6 +12,7 @@
 ###############################################################################
 
 import asyncio
+import datetime
 import json
 import time
 import urllib.parse
@@ -244,18 +245,52 @@ async def get_weather(args: dict, cfg, ctx=None) -> str:
 
 
 # ─── 全局定时提醒（一次性延时 / 每日 cron，跨 session、跨重启持久化）─────────
+def _schedule_at_time(time_str: str, content: str, task: str, cfg) -> str:
+    """在今天的某个固定时钟时刻登记一次性提醒。
+
+    time 用 24 小时制『HH:MM』。相对 delay 由本函数按服务器时钟自行换算，
+    避免依赖模型心算「现在到某时刻还有多少秒」——那正是固定时刻提醒算错时间的根源。
+    若该时刻已过则顺延到明天。返回带精确触发时刻的确认文本让模型复述。
+    """
+    try:
+        parsed = datetime.datetime.strptime(time_str, "%H:%M")
+    except ValueError:
+        return f"（时间格式不正确：应为 24 小时制『HH:MM』，例如 23:20、09:00，收到『{time_str}』）"
+    now = datetime.datetime.now().replace(second=0, microsecond=0)
+    target = now.replace(hour=parsed.hour, minute=parsed.minute)
+    day_word = "今天"
+    if target <= now:
+        target += datetime.timedelta(days=1)
+        day_word = "明天"
+    delay = int((target - now).total_seconds())
+    if not content:
+        return "（提醒参数不完整，无法设置提醒：time 需要配合 content）"
+
+    max_delay = getattr(cfg, "reminder_max_delay_seconds", 7 * 24 * 3600)
+    delay = min(int(delay), max_delay)
+    reminder_manager.schedule_delay(delay, content, task)
+    # 触发时刻按目标时钟时刻复述（实际 fire_at ≈ target，误差 < 1s）
+    return f"已设好提醒：{day_word} {target.strftime('%H:%M')}（{humanize_delay(delay)}后）到点会执行并播报：{content}"
+
+
 async def schedule_reminder(args: dict, cfg, ctx=None) -> str:
-    """设置一条全局定时提醒：要么给 delay_seconds（一次性），要么给 cron（重复）。
+    """设置一条全局定时提醒：给 time（今天某固定时刻）/ delay_seconds（相对时长）/
+    cron（重复）三者之一。
 
     到点由**当前所有在线会话**的数字人主动开口提醒。返回确认文本让模型复述。
     """
     content = ((args or {}).get("content") or "").strip()
     task = ((args or {}).get("task") or "").strip() or content
     cron = ((args or {}).get("cron") or "").strip()
+    at_time = ((args or {}).get("time") or "").strip()
     try:
         delay = int((args or {}).get("delay_seconds", 0))
     except (TypeError, ValueError):
         delay = 0
+
+    # time（固定时刻）优先于 delay_seconds：模型心算相对秒数极易出错。
+    if at_time:
+        return _schedule_at_time(at_time, content, task, cfg)
 
     if cron:
         err = _validate_cron(cron)
@@ -273,7 +308,7 @@ async def schedule_reminder(args: dict, cfg, ctx=None) -> str:
         rid = reminder_manager.schedule_delay(delay, content, task)
         return f"已设好{humanize_delay(delay)}的提醒，到点会执行并播报：{content}"
 
-    return "（提醒参数不完整，无法设置提醒：需要 delay_seconds+content 或 cron+content）"
+    return "（提醒参数不完整，无法设置提醒：需要 time 或 delay_seconds 或 cron，并配合 content）"
 
 
 async def cancel_reminder(args: dict, cfg, ctx=None) -> str:
@@ -330,24 +365,28 @@ TOOL_REGISTRY: dict[str, dict] = {
         "description": (
             "为用户设置一条全局定时提醒。到点触发时，数字人会把 task 当作一条**完整的实时任务**执行："
             "结合可用工具（天气、联网搜索等）实时取数，再开口播报结果。\n"
-            "两种时机用法：\n"
+            "三种时机用法（delay_seconds、time、cron 一次只给其中一个）：\n"
             "- 相对时长（用户说『X分钟/小时/秒后提醒/叫我Y』『过一会儿叫我Y』）→ 给 delay_seconds，"
             "把相对时长换算成整数秒。\n"
-            "- 重复/固定时刻（用户说『每天上午9点提醒我喝水』『每天早上播报天气』『每周一晚上8点叫我Y』）→ 给 cron，"
+            "- 固定的某个时钟时刻（用户说『十一点二十提醒我睡觉』『下午三点叫我』『X点Y分……』这类绝对时刻）→ 给 time，"
+            "24 小时制『HH:MM』（如 '23:20'、'09:00'）。**绝不要自己心算 delay_seconds**——你不知道当前精确时间，"
+            "把绝对时刻交给 time，由系统换算成秒、并在确认里回显精确触发时刻。若该时刻已过，系统会自动顺延到明天。\n"
+            "- 反复定时（用户说『每天上午9点提醒我喝水』『每天早上播报天气』『每周一晚上8点叫我Y』）→ 给 cron，"
             "用 5 字段 cron 表达式（分 时 日 月 星期，星期周日=0）。\n"
-            "请据此二选一给 delay_seconds 或 cron，不要同时给。\n"
             "content 填一段给用户看的简短确认/摘要（如『提醒我喝水』『早上8点播报北京天气』，复述给用户确认即可）。\n"
             "task 填**完整、自包含的任务要求**：把用户的真实意图展开成到点可直接执行的分步指令，"
-            "去掉『X分钟后』『每天早上』这类时机/重复措辞（这些已由 delay/cron 表达），写清到点要做什么、要查什么、按什么方式播报。"
+            "去掉『X分钟后』『每天早上』『11点20』这类时机/重复措辞（这些已由 time/delay_seconds/cron 表达），"
+            "写清到点要做什么、要查什么、按什么方式播报。"
             "task 会脱离原对话历史单独被执行，所以必须能让一个没看过对话的人照做。示例：\n"
             "『播报北京今晚天气：用 weather 工具查当天气温和天气现象，口语化说要不要带伞、穿多少。』"
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "delay_seconds": {"type": "integer", "description": "一次性：多少秒后触发（相对当前时间，正整数）。给这字段时不要给 cron。"},
-                "cron": {"type": "string", "description": "重复：5 字段 cron（分 时 日 月 星期）。给这字段时不要给 delay_seconds。例：'0 9 * * *'=每天上午9点"},
-                "content": {"type": "string", "description": "给用户看的简短确认/摘要（复述这次提醒，如『提醒我喝水』）。"},
+                "time": {"type": "string", "description": "一次性：在今天的某个固定时钟时刻触发，24 小时制『HH:MM』（如 '23:20'、'09:00'）。给这字段时不要给 delay_seconds 或 cron。"},
+                "delay_seconds": {"type": "integer", "description": "一次性：多少秒后触发（相对当前时间，正整数）。用户说『X分钟后』等相对时长时才用；固定时刻请改用 time。给这字段时不要给 time 或 cron。"},
+                "cron": {"type": "string", "description": "重复：5 字段 cron（分 时 日 月 星期）。给这字段时不要给 time 或 delay_seconds。例：'0 9 * * *'=每天上午9点"},
+                "content": {"type": "string", "description": "给用户看的简短确认/摘要（复述这次提醒，如『提醒我睡觉』）。"},
                 "task": {"type": "string", "description": "完整、自包含、已去掉时机词的可执行任务要求，到点由数字人据此查询并播报（详见工具描述示例）。不能只有『提醒』两字。"},
             },
             "required": ["content", "task"],
