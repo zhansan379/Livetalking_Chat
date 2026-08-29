@@ -18,17 +18,69 @@ class EdgeTTS(BaseTTS):
         voicename = textevent.get('tts', {}).get('ref_file',voice) #self.opt.REF_FILE #"zh-CN-YunxiaNeural"
         # 语速：请求级 tts.rate 优先，其次回退全局 opt.SPEECH_RATE，最后引擎默认
         rate = textevent.get('tts', {}).get('rate', self.opt.SPEECH_RATE or "")
-        t = time.time()
-        asyncio.new_event_loop().run_until_complete(self.__main(voicename,text,rate))
-        logger.info(f'-------edge tts time:{time.time()-t:.4f}s')
-        if self.input_stream.getbuffer().nbytes<=0: #edgetts err
-            logger.error('edgetts err!!!!!')
+        # 兜底加固参数，均可通过 config.yaml 可选；缺省值维持原行为
+        max_try      = int(getattr(self.opt, 'TTSP_RETRY', 1))           # 额外重试次数
+        timeout      = float(getattr(self.opt, 'TTSP_TIMEOUT', 30) or 0) # 单次合成超时(秒)，0=不设
+        min_audio_ms = float(getattr(self.opt, 'TTSP_MIN_AUDIO_MS', 300))# 低于此时长认为被截断(毫秒)
+
+        def _warn(why, attempt):
+            logger.warning(f"edgetts {why} (attempt {attempt}/{max_try+1}): {text[:20]!r}")
+
+        stream = None
+        for attempt in range(1, max_try + 2):
+            self._reset_stream()
+            t = time.time()
+            try:
+                loop = asyncio.new_event_loop()
+                if timeout > 0:
+                    loop.run_until_complete(asyncio.wait_for(
+                        self.__main(voicename, text, rate), timeout=timeout))
+                else:
+                    loop.run_until_complete(self.__main(voicename, text, rate))
+                loop.close()
+            except Exception as e:
+                _warn(f"合成异常: {type(e).__name__}: {e}", attempt)
+                # 中途被打断(barge-in)则不再徒劳重试，直接放弃本句
+                if self.state != State.RUNNING:
+                    self._reset_stream()
+                    return
+                continue
+            logger.info(f'-------edge tts time:{time.time()-t:.4f}s')
+
+            if self.input_stream.getbuffer().nbytes <= 0:  #edgetts err
+                _warn("返回空音频", attempt)
+                if self.state != State.RUNNING:
+                    self._reset_stream()
+                    return
+                continue
+
+            self.input_stream.seek(0)
+            try:
+                stream = self.__create_bytes_stream(self.input_stream)
+            except Exception:
+                logger.exception('edgetts 解码音频失败')
+                if self.state != State.RUNNING:
+                    self._reset_stream()
+                    return
+                self._reset_stream()
+                stream = None
+                continue
+            audio_ms = stream.shape[0] / self.sample_rate * 1000
+            logger.info(f'[INFO] tts audio 时长 {audio_ms:.0f}ms')
+            if audio_ms >= min_audio_ms:
+                break
+            _warn(f"音频过短({audio_ms:.0f}ms < {min_audio_ms}ms，疑似断流被截断)", attempt)
+            # 断流导致的截断不属于 barge-in，允许重试
+            self._reset_stream()
+            stream = None
+        else:
+            logger.error(f'edgetts 合成失败超过重试上限，丢弃该句: {text[:20]!r}')
+            self._reset_stream()
             return
-        
-        self.input_stream.seek(0)
-        stream = self.__create_bytes_stream(self.input_stream)
+
+        # ---- 播放音频 ----
         streamlen = stream.shape[0]
-        idx=0
+        idx = 0
         while streamlen >= self.chunk and self.state==State.RUNNING:
             eventpoint={}
             streamlen -= self.chunk
@@ -41,6 +93,10 @@ class EdgeTTS(BaseTTS):
             idx += self.chunk
         #if streamlen>0:  #skip last frame(not 20ms)
         #    self.queue.put(stream[idx:])
+        self._reset_stream()
+
+    def _reset_stream(self):
+        """清空本次合成的音频缓冲区，避免上次残留污染下一次合成。"""
         self.input_stream.seek(0)
         self.input_stream.truncate() 
 
@@ -75,5 +131,6 @@ class EdgeTTS(BaseTTS):
                     #file.write(chunk["data"])
                 elif chunk["type"] == "WordBoundary":
                     pass
-        except Exception as e:
-            logger.exception('edgetts')
+        except Exception:
+            logger.exception('edgetts')  # 不再吞错：记录堆栈后向上抛，触发外层重试
+            raise
