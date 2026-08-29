@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>定时提醒管理</title>
+    <!-- 本地化依赖（web/lib）：完全离线可用 -->
+    <link href="lib/bootstrap.min.css" rel="stylesheet">
+    <style>
+        :root {
+            /* ── 亮色主题（默认） ── */
+            --bg: #eef2f8;
+            --bg-2: #dde7f4;
+            --glow-a: rgba(13, 148, 136, .10);
+            --glow-b: rgba(2, 132, 199, .07);
+            --gridline: rgba(15, 23, 42, .04);
+            --border: rgba(15, 23, 42, .12);
+            --text: #17233a;
+            --muted: #5b6b81;
+            --accent: #0d9488;      /* 品牌青绿 */
+            --accent-2: #d97706;    /* 琥珀 */
+            --danger: #e11d48;
+            --ok: #059669;
+            --info: #0284c7;
+            --navbar-bg: rgba(255, 255, 255, .7);
+            --brand-fg: #111b2c;
+            --card-a: #ffffff;
+            --card-b: #f1f6fd;
+            --card-solid: #f6f9fe;
+            --code-bg: #eef4fb;
+            --code-fg: #26364c;
+            --shadow: 0 14px 40px -22px rgba(23, 51, 94, .28);
+            --skeleton-a: rgba(15, 23, 42, .07);
+            --skeleton-b: rgba(15, 23, 42, .13);
+            --empty-ico: #c5d1e1;
+            --ghost-fg: #33415a;
+            --ghost-border: rgba(15, 23, 42, .18);
+            --tab-fg: #526075;
+            --tab-bg: rgba(15, 23, 42, .05);
+            --tab-hover-bg: rgba(15, 23, 42, .09);
+            --input-bg: #ffffff;
+            --input-ph: #9aa9bb;
+            --input-focus: rgba(13, 148, 136, .18);
+            --chip-muted-bg: #e8eef7;
+            --chip-muted-fg: #3f4f68;
+            --chip-info-bg: rgba(2, 132, 199, .12);
+            --chip-info-fg: #075985;
+            --chip-ok-bg: rgba(5, 150, 105, .13);
+            --chip-ok-fg: #047857;
+            --badge-pend-bg: rgba(217, 119, 6, .14);
+            --badge-pend-fg: #b45309;
+            --badge-run-bg: rgba(2, 132, 199, .13);
+            --badge-run-fg: #0369a1;
+            --badge-ok-bg: rgba(5, 150, 105, .13);
+            --badge-ok-fg: #047857;
+            --badge-fail-bg: rgba(225, 29, 72, .12);
+            --badge-fail-fg: #be123c;
+            --btn-danger-border: rgba(225, 29, 72, .35);
+            --row-hover: rgba(13, 148, 136, .06);
+        }
+        :root[data-theme="dark"] {
+            /* ── 暗色主题 ── */
+            --bg: #070b16;
+            --bg-2: #0b1220;
+            --glow-a: rgba(45, 212, 191, .10);
+            --glow-b: rgba(56, 189, 248, .08);
+            --gridline: rgba(148, 163, 184, .05);
+            --border: rgba(148, 163, 184, .14);
+            --text: #e6edf7;
+            --muted: #8ba0b6;
+            --accent: #2dd4bf;
+            --accent-2: #fbbf24;
+            --danger: #f43f5e;
+            --ok: #34d399;
+            --info: #38bdf8;
+            --navbar-bg: rgba(7, 11, 22, .6);
+            --brand-fg: #ffffff;
+            --card-a: rgba(23, 34, 58, .55);
+            --card-b: rgba(13, 20, 38, .6);
+            --card-solid: #101a2e;
+            --code-bg: rgba(9, 15, 28, .6);
+            --code-fg: #bcd2e8;
+            --shadow: 0 14px 40px -18px rgba(0, 0, 0, .7);
+            --skeleton-a: rgba(148, 163, 184, .08);
+            --skeleton-b: rgba(148, 163, 184, .16);
+            --empty-ico: #33415a;
+            --ghost-fg: #cfe3f5;
+            --ghost-border: rgba(148, 163, 184, .35);
+            --tab-fg: #cfe3f5;
+            --tab-bg: rgba(255, 255, 255, .06);
+            --tab-hover-bg: rgba(255, 255, 255, .12);
+            --input-bg: #0e1830;
+            --input-ph: #4c5c75;
+            --input-focus: rgba(45, 212, 191, .15);
+            --chip-muted-bg: #243047;
+            --chip-muted-fg: #cfe3f5;
+            --chip-info-bg: rgba(56, 189, 248, .16);
+            --chip-info-fg: #bfe6ff;
+            --chip-ok-bg: rgba(52, 211, 153, .14);
+            --chip-ok-fg: #5eead4;
+            --badge-pend-bg: rgba(251, 191, 36, .14);
+            --badge-pend-fg: #fcd34d;
+            --badge-run-bg: rgba(56, 189, 248, .14);
+            --badge-run-fg: #bae6fd;
+            --badge-ok-bg: rgba(52, 211, 153, .14);
+            --badge-ok-fg: #5eead4;
+            --badge-fail-bg: rgba(244, 63, 94, .14);
+            --badge-fail-fg: #fda4af;
+            --btn-danger-border: rgba(244, 63, 94, .4);
+            --row-hover: rgba(45, 212, 191, .05);
+            --accent-ink: #062b26;
+        }
+        :root {
+            /* 亮色主题下文字着色统一走 --accent-ink（=白） */
+            --accent-ink: #ffffff;
+            --mono: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", menlo, monospace;
+            --sans: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+            --r: 14px;
+        }
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: var(--sans);
+            color: var(--text);
+            background:
+                radial-gradient(900px 480px at 78% -6%, var(--glow-a), transparent 60%),
+                radial-gradient(820px 420px at 6% 0%, var(--glow-b), transparent 55%),
+                linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+            min-height: 100vh; padding: 0; margin: 0;
+        }
+        body::before {
+            content: "";
+            position: fixed; inset: 0; z-index: 0; pointer-events: none;
+            background-image:
+                linear-gradient(var(--gridline) 1px, transparent 1px),
+                linear-gradient(90deg, var(--gridline) 1px, transparent 1px);
+            background-size: 44px 44px;
+            mask-image: linear-gradient(180deg, rgba(0, 0, 0, .55), transparent 72%);
+            -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, .55), transparent 72%);
+        }
+        .glass-card { position: relative; }
+        .container { position: relative; z-index: 1; max-width: 1200px; padding-top: 20px; padding-bottom: 40px; }
+
+        /* ── 顶部导航 ── */
+        .navbar {
+            background: var(--navbar-bg);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            border-bottom: 1px solid var(--border);
+        }
+        .navbar-brand { font-family: var(--mono); font-weight: 700; color: var(--brand-fg); letter-spacing: .4px; }
+        .navbar-brand svg { color: var(--accent); }
+        .btn-outline-light {
+            color: var(--ghost-fg); border-color: var(--ghost-border);
+            display: inline-flex; align-items: center; gap: 6px;
+            white-space: nowrap;
+        }
+        .btn-outline-light svg { width: 15px; height: 15px; flex: none; }
+        .btn-outline-light:hover { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+
+        /* ── 玻璃卡片 ── */
+        .glass-card {
+            background: linear-gradient(180deg, var(--card-a), var(--card-b));
+            border: 1px solid var(--border);
+            border-radius: var(--r);
+            box-shadow: var(--shadow);
+        }
+        .glass-card::after {
+            content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04);
+        }
+        .card-header {
+            background: transparent; border-bottom: 1px solid var(--border);
+            padding: 18px 22px; font-weight: 700; font-size: 1.02rem;
+            display: flex; align-items: center; font-family: var(--mono); letter-spacing: .2px;
+        }
+        .card-header svg { color: var(--accent); margin-right: 9px; flex-shrink: 0; }
+        .card-body { padding: 22px; position: relative; }
+
+        .refresh-spinner { font-size: .8rem; color: var(--muted); margin-left: auto; font-weight: 400; }
+        .refresh-spinner svg { vertical-align: -3px; margin-right: 4px; }
+        .spin { animation: rotation 1s linear infinite; }
+        @keyframes rotation { from { transform: rotate(0deg); } to { transform: rotate(359deg); } }
+
+        .btn-submit {
+            background: linear-gradient(135deg, var(--accent), var(--info));
+            border: none; color: var(--accent-ink);
+            padding: 12px; font-weight: 700; border-radius: 10px;
+            transition: transform .2s, box-shadow .2s; width: 100%;
+            display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+            font-family: var(--mono);
+        }
+        .btn-submit:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 22px rgba(2, 132, 199, .35);
+            color: var(--accent-ink);
+        }
+        .form-label { color: var(--muted); font-size: .78rem; font-family: var(--mono); letter-spacing: .3px; margin-bottom: 6px; }
+        .form-control, .form-select {
+            background: var(--input-bg); border: 1px solid var(--border); color: var(--text);
+            font-family: var(--mono); font-size: .9rem;
+        }
+        .form-control::placeholder { color: var(--input-ph); }
+        .form-control:focus, .form-select:focus {
+            background: var(--input-bg); color: var(--text); border-color: var(--accent);
+            box-shadow: 0 0 0 .2rem var(--input-focus);
+        }
+        .form-select option { background: var(--input-bg); color: var(--text); }
+        .form-text { color: var(--muted); }
+
+        .badge-status {
+            font-size: .74rem; padding: 4px 11px; border-radius: 20px; font-weight: 700;
+            font-family: var(--mono); border: 1px solid transparent; display: inline-flex; align-items: center; gap: 5px;
+        }
+        .badge-status svg { width: 13px; height: 13px; }
+        .status-recurring { background: var(--badge-run-bg); color: var(--badge-run-fg); border-color: var(--badge-run-fg); }
+        .status-once     { background: var(--badge-pend-bg); color: var(--badge-pend-fg); border-color: var(--badge-pend-fg); }
+
+        .reminder-table {
+            --bs-table-bg: transparent; --bs-table-color: var(--text);
+            background-color: transparent;
+        }
+        .reminder-table th {
+            color: var(--muted); font-weight: 600; text-transform: uppercase;
+            font-size: .78rem; letter-spacing: .5px; border-bottom: 2px solid var(--border); background: transparent;
+        }
+        .reminder-table td {
+            font-weight: 500; color: var(--text); vertical-align: middle;
+            word-break: break-all; border-bottom: 1px solid var(--border); background: transparent;
+        }
+        .reminder-table tr:hover td { background: var(--row-hover); }
+
+        .empty-state { text-align: center; padding: 36px 16px; color: var(--muted); }
+        .empty-state svg { width: 38px; height: 38px; color: var(--empty-ico); margin-bottom: 12px; }
+
+        .skeleton {
+            background: linear-gradient(90deg, var(--skeleton-a) 25%, var(--skeleton-b) 50%, var(--skeleton-a) 75%);
+            background-size: 200% 100%; animation: loading 1.5s infinite;
+            border-radius: 4px; height: 20px;
+        }
+        @keyframes loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+        .footer-hint { font-size: .8rem; color: var(--muted); text-align: center; margin-top: 26px; font-family: var(--mono); }
+
+        /* ── Bootstrap 覆盖 ── */
+        .alert-danger { background: var(--badge-fail-bg); color: var(--badge-fail-fg); border-color: var(--btn-danger-border); }
+        .btn-outline-danger { color: var(--badge-fail-fg); border-color: var(--btn-danger-border); display: inline-flex; align-items: center; gap: 5px; }
+        .btn-outline-danger:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
+        .btn-outline-danger svg { width: 14px; height: 14px; }
+        a, .text-primary { color: var(--accent); }
+        .text-success { color: var(--ok) !important; }
+        .text-danger { color: var(--danger) !important; }
+        .text-muted, .text-secondary { color: var(--muted) !important; }
+        .badge.bg-primary { background: var(--accent) !important; color: var(--accent-ink); }
+        .badge.bg-secondary { background: var(--chip-muted-bg) !important; color: var(--chip-muted-fg); }
+        .badge.bg-info { background: var(--chip-info-bg) !important; color: var(--chip-info-fg); }
+    </style>
+</head>
+<body>
+
+<nav class="navbar">
+    <div class="container-fluid px-4">
+        <a class="navbar-brand" href="#">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right:8px"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+            定时提醒
+        </a>
+        <div class="d-flex align-items-center gap-1 ms-auto">
+        <a class="btn btn-sm btn-outline-light me-2" href="/admin.html">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 1 9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M9 6.21V9a1 1 0 0 1-1 1H5.74"/><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/></svg>
+            <span class="d-none d-sm-inline">后台管理</span>
+        </a>
+        <a class="btn btn-sm btn-outline-light me-2" href="/obs.html">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.48 12H2"/></svg>
+            <span class="d-none d-sm-inline">观测</span>
+        </a>
+        <button class="btn btn-sm btn-outline-light" id="themeToggle" onclick="toggleTheme()" aria-label="切换主题">
+            <svg id="themeIco" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+            <span class="d-none d-sm-inline">暗色</span>
+        </button>
+        <button class="btn btn-sm btn-outline-light" onclick="refreshReminders()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
+            <span class="d-none d-sm-inline">刷新</span>
+        </button>
+        </div>
+    </div>
+</nav>
+
+<div class="container">
+    <div class="row g-4">
+        <!-- 新建提醒 -->
+        <div class="col-lg-4">
+            <div class="glass-card">
+                <div class="card-header">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                    新建定时提醒
+                </div>
+                <div class="card-body">
+                    <form id="reminderForm">
+                        <div class="mb-3">
+                            <label class="form-label">提醒内容 / 确认摘要</label>
+                            <textarea class="form-control" id="content" rows="2" placeholder="例：提醒我喝水&#10;例：查一下今天的天气并播报" required></textarea>
+                            <div class="form-text mt-1">给用户看的简短摘要（复述这次提醒）。</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">完整任务要求 <span class="text-secondary fw-normal">（可选，留空则用上面内容）</span></label>
+                            <textarea class="form-control" id="task" rows="3" placeholder="到点数字人按这条脱离上下文也能照做的分步指令执行并播报，不含『X分钟后』这类时机词。&#10;例：用天气工具查北京今晩天气，口语化说要带伞/穿多少。"></textarea>
+                            <div class="form-text mt-1">到点执行的真正指令；写清要做什么、查什么、怎么播报。</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">触发方式</label>
+                            <select class="form-select" id="mode" onchange="toggleMode()">
+                                <option value="delay">一次（N 秒后）</option>
+                                <option value="cron">重复（cron 表达式）</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3" id="delayGroup">
+                            <label class="form-label">延时秒数</label>
+                            <input type="number" class="form-control" id="delaySeconds" min="1" value="5" placeholder="如 600 = 10 分钟">
+                        </div>
+
+                        <div class="mb-3 d-none" id="cronGroup">
+                            <label class="form-label">Cron 表达式（分 时 日 月 星期）</label>
+                            <input type="text" class="form-control" id="cronExpr" placeholder="如 * * * * *   0 9 * * *" value="* * * * *">
+                            <div class="form-text mt-1">支持 * 、*/N 、N,M 、N-M 、N；星期 0=周日。</div>
+                        </div>
+
+                        <button type="submit" class="btn btn-submit mt-1" id="submitBtn">
+                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+                            创建提醒
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- 提醒列表 -->
+        <div class="col-lg-8">
+            <div class="glass-card">
+                <div class="card-header">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    提醒列表
+                    <span class="badge bg-primary ms-2 rounded-pill" id="reminderCount">0</span>
+                    <span class="refresh-spinner" id="refreshInfo">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spin" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg>
+                        自动更新中...
+                    </span>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-borderless reminder-table" id="reminderTable">
+                            <thead>
+                                <tr>
+                                    <th style="width:118px">类型</th>
+                                    <th>内容</th>
+                                    <th style="width:170px;white-space:nowrap">下次触发</th>
+                                    <th style="width:92px"></th>
+                                </tr>
+                            </thead>
+                            <tbody id="reminderBody">
+                                <tr><td colspan="4"><div class="skeleton"></div><div class="skeleton mt-2"></div></td></tr>
+                            </tbody>
+                        </table>
+                        <div class="empty-state d-none" id="emptyState">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+                            <h5>暂无定时提醒</h5>
+                            <p>在左侧填写内容并创建即可。</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer-hint">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="16" y2="12"/><line x1="12" x2="12.01" y1="8" y2="8"/></svg>接口：GET /api/reminders、POST /api/reminders、POST /api/reminders/cancel
+    </div>
+</div>
+
+<script src="lib/bootstrap.bundle.min.js"></script>
+<script src="lib/jquery-2.1.1.min.js"></script>
+<script>
+/* ==========================================================
+ *  内联 SVG 图标库（Lucide 风格，禁止 Emoji）
+ * ========================================================== */
+const IC = {
+    clock:  '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+    repeat: '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
+    bell:   '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+    check:  '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+    alert:  '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 20h16a2 2 0 0 0 1.73-2Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/>',
+    trash:  '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+    inbox:  '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+    sun:    '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
+    moon:   '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'
+};
+function svg(paths, extra) {
+    return '<svg class="' + (extra || '') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>';
+}
+
+/* ==========================================================
+ *  主题切换（默认亮色，localStorage 记住选择）
+ * ========================================================== */
+function applyTheme() {
+    const saved = localStorage.getItem('lt-theme');
+    if (saved === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+    else document.documentElement.removeAttribute('data-theme');
+    refreshThemeIco();
+}
+function refreshThemeIco() {
+    const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+    $('#themeToggle').html(svg(dark ? IC.sun : IC.moon, 'themeIco') + '<span class="d-none d-sm-inline"> ' + (dark ? '亮色' : '暗色') + '</span>');
+}
+function toggleTheme() {
+    const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+    if (dark) { document.documentElement.removeAttribute('data-theme'); localStorage.setItem('lt-theme', 'light'); }
+    else { document.documentElement.setAttribute('data-theme', 'dark'); localStorage.setItem('lt-theme', 'dark'); }
+    refreshThemeIco();
+}
+
+/* ==========================================================
+ *  新建提醒（一次 / cron 切换）
+ * ========================================================== */
+function toggleMode() {
+    const cron = $('#mode').val() === 'cron';
+    $('#cronGroup').toggleClass('d-none', !cron);
+    $('#delayGroup').toggleClass('d-none', cron);
+    $('#cronExpr').prop('required', cron);
+    $('#delaySeconds').prop('required', !cron);
+}
+
+const $form = $('#reminderForm'), $submit = $('#submitBtn');
+
+function buildPayload() {
+    const content = $('#content').val().trim();
+    if (!content) { toast('请填写提醒内容', false); return null; }
+    const task = $('#task').val().trim();
+    if ($('#mode').val() === 'cron') {
+        const cron = $('#cronExpr').val().trim();
+        if (!cron) { toast('请填写 cron 表达式', false); return null; }
+        return { content: content, task: task, cron: cron };
+    }
+    const delay = parseInt($('#delaySeconds').val(), 10);
+    if (!(delay > 0)) { toast('请填写大于 0 的延时秒数', false); return null; }
+    return { content: content, task: task, delay_seconds: delay };
+}
+
+$form.on('submit', async (e) => {
+    e.preventDefault();
+    const payload = buildPayload();
+    if (!payload) return;
+    $submit.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-2"></span>正在创建...');
+    try {
+        const res = await fetch('/api/reminders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const r = await res.json();
+        if (r.code === 0) {
+            toast('提醒已创建', true);
+            $form[0].reset();
+            $('#delaySeconds').val(5);
+            $('#cronExpr').val('* * * * *');
+            refreshReminders();
+        } else {
+            toast('创建失败: ' + r.msg, false);
+        }
+    } catch (err) {
+        toast('创建请求发生网络错误', false);
+    } finally {
+        $submit.prop('disabled', false).html(svg('<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>') + '创建提醒');
+    }
+});
+
+/* ==========================================================
+ *  提醒列表
+ * ========================================================== */
+async function refreshReminders() {
+    try {
+        const res = await fetch('/api/reminders');
+        const r = await res.json();
+        if (r.code === 0) renderReminders(r.data.reminders);
+    } catch (err) { /* 忽略瞬时错误 */ }
+}
+
+function esc(s) {
+    return (s == null ? '' : String(s))
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function renderReminders(items) {
+    const $body = $('#reminderBody');
+    $('#reminderCount').text(items ? items.length : 0);
+    $('#emptyState').toggleClass('d-none', !!(items && items.length));
+    if (!items || !items.length) { $body.empty(); return; }
+
+    const now = Date.now() / 1000;
+    let html = '';
+    items.forEach(r => {
+        const kind = r.recurring
+            ? '<span class="badge-status status-recurring">' + svg(IC.repeat) + '重复 ' + esc(r.cron) + '</span>'
+            : '<span class="badge-status status-once">' + svg(IC.bell) + '一次</span>';
+        const fire = new Date(r.fire_at * 1000);
+        const overdue = now > r.fire_at;
+        const fireHtml = overdue
+            ? '<span class="text-danger">' + fire.toLocaleString() + '</span>'
+            : fire.toLocaleString();
+        const taskTxt = (r.task || '').trim();
+        const cellBody = taskTxt && taskTxt !== r.content
+            ? '<span class="text-secondary" style="font-size:.95em">' + esc(r.content) + '</span><br>' + esc(taskTxt)
+            : esc(r.content);
+        html += `
+        <tr>
+            <td style="white-space:nowrap">${kind}</td>
+            <td style="min-width:220px">${cellBody}</td>
+            <td style="font-family:var(--mono);white-space:nowrap">${fireHtml}</td>
+            <td class="text-end" style="white-space:nowrap">
+                <button class="btn btn-sm btn-outline-danger" style="white-space:nowrap" onclick="cancelReminder('${esc(r.id)}')" title="取消此提醒">
+                    ${svg(IC.trash)} 取消
+                </button>
+            </td>
+        </tr>`;
+    });
+    $body.html(html);
+}
+
+async function cancelReminder(rid) {
+    if (!confirm('确定取消这条提醒吗?')) return;
+    try {
+        const res = await fetch('/api/reminders/cancel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reminder_id: rid })
+        });
+        const r = await res.json();
+        r.code === 0 ? toast('已取消提醒', true) : toast(r.msg, false);
+        refreshReminders();
+    } catch (err) { toast('取消失败，请重试', false); }
+}
+
+/* ==========================================================
+ *  轻量 Toast 提示
+ * ========================================================== */
+function toast(msg, isOk) {
+    const $t = $('<div style="position:fixed;top:74px;left:50%;transform:translateX(-50%);z-index:2000;' +
+        'background:' + (isOk ? '#0b6e5a' : '#7f1d2e') + ';color:#fff;padding:10px 20px;border-radius:999px;' +
+        'border:1px solid ' + (isOk ? 'rgba(45,212,191,.5)' : 'rgba(244,63,94,.5)') + ';' +
+        'box-shadow:0 6px 20px rgba(0,0,0,.4);font-size:0.9rem;' +
+        'display:inline-flex;align-items:center;gap:7px;">' + svg(isOk ? IC.check : IC.alert) + msg + '</div>').appendTo('body');
+    setTimeout(() => $t.fadeOut(300, () => $t.remove()), 2600);
+}
+
+/* ==========================================================
+ *  初始化与定时刷新
+ * ========================================================== */
+$(function () {
+    applyTheme();
+    toggleMode();
+    refreshReminders();
+    setInterval(refreshReminders, 5000);
+});
+</script>
+</body>
+</html>

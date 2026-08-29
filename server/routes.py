@@ -12,6 +12,7 @@ from server.responses import json_ok, json_error
 from server.session_manager import session_manager
 from server.avatar_routes import setup_avatar_routes
 from agent.chat import stream_llm_chat, notify_reply_start
+from agent.reminder import reminder_manager
 
 
 def get_session(request, sessionid: str):
@@ -211,6 +212,58 @@ async def admin_sessions(request):
         return json_error(str(e))
 
 
+# ─── 全局定时提醒管理接口 ───────────────────────────────────────────────────
+
+async def api_reminders_list(request):
+    """列出当前所有定时提醒（结构化 JSON）。"""
+    try:
+        rows = reminder_manager.records()
+        return json_ok(data={"reminders": rows, "count": len(rows)})
+    except Exception as e:
+        logger.exception('list reminders exception:')
+        return json_error(str(e))
+
+
+async def api_reminders_create(request):
+    """创建一条定时提醒：cron（重复）或 delay_seconds（一次性）+ content。"""
+    try:
+        params = await request.json()
+        content = str(params.get('content', '')).strip()
+        if not content:
+            return json_error("content required")
+        task = str(params.get('task', '')).strip() or content
+        cron = str(params.get('cron', '')).strip()
+        if cron:
+            rid = reminder_manager.schedule_cron(cron, content, task)
+        else:
+            delay = int(params.get('delay_seconds', 0) or 0)
+            if delay <= 0:
+                return json_error("need cron or positive delay_seconds")
+            rid = reminder_manager.schedule_delay(delay, content, task)
+        return json_ok(data={"reminder_id": rid})
+    except ValueError as e:
+        return json_error(str(e))
+    except Exception as e:
+        logger.exception('create reminder exception:')
+        return json_error(str(e))
+
+
+async def api_reminders_cancel(request):
+    """按 reminder_id 取消一条提醒。"""
+    try:
+        params = await request.json()
+        rid = str(params.get('reminder_id', '')).strip()
+        if not rid:
+            return json_error("reminder_id required")
+        ok = reminder_manager.cancel(rid)
+        if ok:
+            return json_ok(data={"cancelled": True})
+        return json_error(f"reminder {rid} not found")
+    except Exception as e:
+        logger.exception('cancel reminder exception:')
+        return json_error(str(e))
+
+
 # ─── 路由注册 ──────────────────────────────────────────────────────────────
 
 async def index(request):
@@ -236,6 +289,11 @@ def setup_routes(app):
     app.router.add_get("/api/admin/config", admin_config)
     app.router.add_get("/api/admin/sessions", admin_sessions)
     app.router.add_get('/sse', sse_handler)
+
+    # ── 全局定时提醒管理 ──
+    app.router.add_get('/api/reminders', api_reminders_list)
+    app.router.add_post('/api/reminders', api_reminders_create)
+    app.router.add_post('/api/reminders/cancel', api_reminders_cancel)
 
     # ── Local ASR endpoint (SenseVoice/FunASR) ── Issue #604 ──
     try:

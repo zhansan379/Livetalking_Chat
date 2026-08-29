@@ -45,6 +45,11 @@ _DEFAULT = {
             "geocoding_base_url": "https://geocoding-api.open-meteo.com",
             "coords": {},
         },
+        "reminder": {
+            "enabled": True,
+            "store_path": "data/reminders.json",
+            "max_delay_seconds": 604800,
+        },
     },
 }
 
@@ -127,6 +132,13 @@ class AgentConfig:
             for name, pt in (w_weather.get("coords") or {}).items()
             if len(pt) >= 2
         }
+
+        w_reminder = tools.get("reminder", {}) or {}
+        self.tool_reminder_enabled: bool = bool(w_reminder.get("enabled", True))
+        self.reminder_store_path: str | None = w_reminder.get("store_path") or None
+        self.reminder_max_delay_seconds: int = int(
+            w_reminder.get("max_delay_seconds", 604800) or 604800
+        )
 
     @property
     def max_summary_tokens(self) -> int:

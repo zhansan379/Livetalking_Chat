@@ -221,6 +221,17 @@ def main():
                 if k!=0:
                     push_url = opt.push_url+str(k)
                 loop.run_until_complete(rtc_manager.handle_rtcpush(push_url, str(k)))
+        # 全局定时提醒：启动时恢复持久化提醒，常驻调度循环随服务启停
+        try:
+            from agent.config import get_agent_config
+            from agent.reminder import reminder_manager
+            _rcfg = get_agent_config().reminder_store_path
+            if _rcfg:
+                reminder_manager.store_path = _rcfg
+            reminder_manager.load()   # 同步加载（恢复持久化提醒）
+            loop.create_task(reminder_manager.run())
+        except Exception as e:
+            logger.exception('reminder scheduler init failed: %s', e)
         loop.run_forever()    
     #Thread(target=run_server, args=(web.AppRunner(appasync),)).start()
     run_server(web.AppRunner(appasync))
