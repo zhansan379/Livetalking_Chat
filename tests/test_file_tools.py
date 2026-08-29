@@ -76,6 +76,24 @@ class FileToolsTest(unittest.TestCase):
         self.assertLessEqual(len(body), 300)
         self.assertLess(len(body), 500)  # 确证确实截断了
 
+    def test_srt_is_plain_text(self):
+        # 字幕文件本质上就是文本，应能读出正文
+        from agent.files import read_file
+        with open(os.path.join(self.sid_dir, "a.srt"), "w", encoding="utf-8") as f:
+            f.write("1\n00:00:00,000 --> 00:00:01,000\n你好，世界")
+        out = asyncio.run(read_file({"path": "a.srt"}, self._cfg(), ctx=_Ctx(self.sid)))
+        self.assertIn("你好，世界", out)
+
+    def test_tolerant_name_resolves_ugly_stored_name(self):
+        # 中文/括号被清理成一串 '_' 的旧文件，模型复述成干净名字也能命中
+        from agent.files import read_file
+        ugly = "_my_____resume________marketing________2021_role.txt"
+        with open(os.path.join(self.sid_dir, ugly), "w", encoding="utf-8") as f:
+            f.write("第X行：五年内容运营")
+        out = asyncio.run(read_file({"path": "myresumemarketing2021role.txt"}, self._cfg(), ctx=_Ctx(self.sid)))
+        self.assertIn("内容运营", out)
+        self.assertNotIn("找不到", out)
+
     def test_unknown_ext_degrades(self):
         from agent.files import read_file
         with open(os.path.join(self.sid_dir, "blob.bin"), "wb") as f:

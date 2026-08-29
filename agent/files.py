@@ -23,6 +23,14 @@ from utils.logger import logger
 _SAFE_SID = re.compile(r"[^A-Za-z0-9_.\-]")
 
 
+def sanitize_name(name: str) -> str:
+    """把用户上传文件名归一化成可读稳定名：只取裸文件名，非安全字符连续串压成一个
+    '_' 并去首尾下划线/空白。避免中文/括号被逐个转成一大串 '_' 导致文件名无法复述。"""
+    base = os.path.basename((name or "").replace('\\', '/')).strip()
+    base = re.sub(r"[^A-Za-z0-9_.\-]+", "_", base).strip("_. \t")
+    return base.strip() or "file"
+
+
 def _upload_dir(cfg) -> str:
     return getattr(cfg, "file_upload_dir", None) or "data/uploads"
 
@@ -40,7 +48,7 @@ def _text_from_file(path: str) -> str | None:
     """按扩展名尽力抽取文本；不支持/解析失败返回 None（调用方如实降级）。"""
     ext = os.path.splitext(path)[1].lower()
     try:
-        if ext in (".txt", ".md", ".log", ".json", ".csv"):
+        if ext in (".txt", ".md", ".log", ".json", ".csv", ".srt", ".vtt", ".sub"):
             with open(path, "r", encoding="utf-8", errors="replace") as f:
                 return f.read()
         if ext == ".pdf":
@@ -63,6 +71,44 @@ def _text_from_file(path: str) -> str | None:
     return None
 
 
+def _norm_key(name: str) -> str:
+    """宽容比对用的归一化键：去掉所有非字母数字、统一小写。
+
+    中文/括号/'-'/'_' 等位置差异全部抹平，让『python_asyncio_…bilibili_…』和
+    模型复述的『pythonasynciobilibili…』归到同一个键上。仅用于解析带出磁盘真实名，
+    不做展示。
+    """
+    return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
+def _resolve_stored_name(sid_dir: str, raw: str) -> str | None:
+    """把用户/模型给的名称宽容解析成磁盘上的真实文件名。
+
+    先精确匹配；不中则把请求名与各文件名各自归一化（去标点/下划线/大小写差异）后
+    比对，命中唯一目标即返回。这样即使文件名含中文/括号被清理成 '_'、模型复述时
+    下划线/大小写有出入，也能正确读到。
+    """
+    raw = raw.strip()
+    # 仅允许裸文件名（本会话目录内）——不接受绝对路径/上级路径
+    if "/" in raw or "\\" in raw:
+        return None
+    if not os.path.isdir(sid_dir):
+        return None
+    exact = os.path.join(sid_dir, raw)
+    if os.path.isfile(exact):
+        return exact
+    ones = _norm_key(raw)
+    hits = []
+    try:
+        for f in os.listdir(sid_dir):
+            p = os.path.join(sid_dir, f)
+            if os.path.isfile(p) and _norm_key(f) == ones:
+                hits.append(p)
+    except OSError:
+        return None
+    return hits[0] if len(hits) == 1 else None
+
+
 def _read_scoped(path_arg: str, cfg, session_id: str | None) -> tuple[str, str]:
     """读文件并返回 (状态, 内容)。状态：ok | refused(越权) | unavailable。"""
     sid_dir = _session_dir(cfg, session_id)
@@ -74,8 +120,8 @@ def _read_scoped(path_arg: str, cfg, session_id: str | None) -> tuple[str, str]:
     # 仅允许裸文件名（本会话目录内）——不接受绝对路径/上级路径
     if "/" in raw or "\\" in raw:
         return "refused", "（请只提供文件名，例如 resume.pdf）"
-    target = os.path.realpath(os.path.join(sid_dir, raw))
-    if os.path.commonpath([target, sid_dir]) != sid_dir or not os.path.isfile(target):
+    target = _resolve_stored_name(sid_dir, raw)
+    if target is None:
         return "refused", "（找不到该会话下的这个文件，或无权访问）"
     text = _text_from_file(target)
     if text is None:
@@ -127,7 +173,9 @@ def _file_tool_specs() -> list[dict]:
             "description": (
                 "列出当前这段对话所属会话里已上传的文件（文件名 + 大小）。"
                 "当用户提到上传过文件、或你怀疑有可用的个人资料（简历、岗位要求等）"
-                "而想确认时调用。只能看到当前会话自己的文件。"
+                "而想确认时调用。只能看到当前会话自己的文件。\n"
+                "在回答『本会话有没有文件 / 是不是空的』这类问题之前必须先调用本工具"
+                "核实，不要凭记忆或猜测断言结果；拿不准就查。"
             ),
             "parameters": {
                 "type": "object",

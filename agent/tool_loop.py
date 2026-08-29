@@ -576,6 +576,14 @@ async def run_tool_loop(agent_messages: list, tools: list[dict], cfg, ctx: ToolC
                     "success": ok,
                     "error": err,
                 })
+                # 主日志也留一行：这是『到底调了没调、结果如何』的第一手证据（trace 在 JSONL）
+                logger.info(
+                    "tool_call round=%s tool=%s args=%s success=%s elapsed_ms=%s snippet=%s",
+                    idx, tool_name,
+                    _trunc(json.dumps(args, ensure_ascii=False), 200) if args else "{}",
+                    ok, round((time.monotonic() - t0) * 1000, 1),
+                    _trunc(result, 120).replace("\n", " "),
+                )
                 msgs.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
     logger.error("tool loop hit %d rounds without a text answer", cfg.tool_max_rounds)

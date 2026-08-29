@@ -922,12 +922,20 @@
         if (callOn) setCallStatus('正在倾听...', 'listening');
     }
 
+    // 刚上传的文件（相对路径）：随下一条 chat 消息带给后端，提示模型先 list_files 核实
+    var _pendingUploadNote = null;
+
     function sendChat(text, trace_id) {
         var body = {
             text: text, type: 'chat', interrupt: true, sessionid: getSessionId()
         };
         // echo ASR 服务端下发的回合 trace_id，让聊天 trace 复用同一 id（拼成一条 trace）
         if (trace_id) body.trace_id = trace_id;
+        // 上传提示仅随第一条消息送达一次，避免反复注入
+        if (_pendingUploadNote) {
+            body.upload_note = _pendingUploadNote;
+            _pendingUploadNote = null;
+        }
         return fetch('/human', {
             body: JSON.stringify(body),
             headers: { 'Content-Type': 'application/json' }, method: 'POST'
@@ -975,7 +983,9 @@
             .then(function (resp) {
                 if (resp && resp.code === 0 && resp.data && resp.data.path) {
                     var path = resp.data.path;
-                    showToast('已上传：' + path + '。可在对话里让我读取这个文件（如简历/岗位要求）。', false);
+                    // 记为「待携带的上传提示」，下一条 chat 消息送达后端（见 sendChat）
+                    _pendingUploadNote = path;
+                    showToast('已上传：' + path + '。可在对话里让我读取这个文件。', false);
                     // 顺带把相对路径填进输入框，方便直接用文字指代
                     var msg = document.getElementById('msg');
                     if (msg) { msg.value = path; msg.focus(); }

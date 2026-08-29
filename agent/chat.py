@@ -112,7 +112,8 @@ async def _probe_tone(agent, message: str) -> dict:
 
 
 async def stream_llm_chat(avatar_session, session_id: str, message: str,
-                          datainfo: dict = {}, trace_id: str | None = None):
+                          datainfo: dict = {}, trace_id: str | None = None,
+                          upload_note: str | None = None):
     """基于 infra_ai + agent 记忆的问答：优先走工具循环，无启用工具时退回流式问答。
 
     - 使用 agent.ChatAgent 加载/保存完整转录，并把「历史摘要 + 最近几轮」拼进上下文；
@@ -152,6 +153,21 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str,
             messages.append({"role": "system", "content": _cap_blk})
     except Exception as e:  # noqa: BLE001 - 能力注入失败不应阻断主问答
         logger.exception("capability system block inject exception: %s", e)
+    # 插口⑤：前端刚上传过文件 → 给本次回复注入一条临时提示（只进本次上下文、
+    # 不落 agent 历史），引导模型先 list_files 核实再作答，避免凭记忆断言"没有文件"
+    try:
+        if upload_note and str(upload_note).strip():
+            messages.append({
+                "role": "system",
+                "content": (
+                    f"[本会话刚上传了文件：{upload_note}] 用户正就它提问。"
+                    "回答任何关于本会话文件是否存在或其内容的问题前，"
+                    "请先调用 list_files 确认文件名，需要内容再调用 read_file；"
+                    "不要凭记忆断言没有文件。"
+                ),
+            })
+    except Exception as e:  # noqa: BLE001 - 提示注入失败不应阻断主问答
+        logger.exception("upload_note inject exception: %s", e)
     # 插口③：按会话+状态条件暴露工具子集（能力工具仅进行中相关子集；全局工具照常）
     tools = build_tools(session_tools(session_id, cfg))
     # trace_id：复用来自 ASR 服务端下发的回合 id（浏览器 echo），从而把

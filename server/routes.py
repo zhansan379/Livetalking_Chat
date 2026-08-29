@@ -50,7 +50,8 @@ async def human(request):
             # trace_id：浏览器 echo 的 ASR 回合 id → chat 段复用，拼成一条全链路 trace
             asyncio.create_task(
                 stream_llm_chat(avatar_session, sessionid, params['text'], datainfo,
-                                trace_id=params.get('trace_id'))
+                                trace_id=params.get('trace_id'),
+                                upload_note=params.get('upload_note'))
             )
 
         return json_ok()
@@ -101,7 +102,7 @@ async def upload_file(request):
     read_file 在会话范围内读取。仅暂存，生命周期/配额属后续里程碑。
     """
     try:
-        from agent.files import _session_dir, _SAFE_SID
+        from agent.files import _session_dir, sanitize_name
         from agent.config import get_agent_config
 
         form = await request.post()
@@ -112,10 +113,7 @@ async def upload_file(request):
             return json_error("invalid sessionid")
 
         fileobj = form['file']
-        fname = str(fileobj.filename or 'file').strip()
-        # 文件名为数据，只取裸文件名（去路径）；安全字符过滤后再装回会话目录
-        fname = os.path.basename(fname.replace('\\', '/'))
-        fname = _SAFE_SID.sub('_', fname) or 'file'
+        fname = sanitize_name(str(fileobj.filename or 'file'))
 
         os.makedirs(sid_dir, exist_ok=True)
         dest = os.path.join(sid_dir, fname)
