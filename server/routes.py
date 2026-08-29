@@ -105,10 +105,22 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str,
     from agent import ChatAgent
     from agent.config import get_agent_config
     from agent.tool_loop import build_tools, list_enabled_tools, run_tool_loop
+    from agent.longterm import (
+        extract_longterm_memory,
+        inject_memory_block,
+        recall_longterm_memories,
+    )
     from obs import begin_trace as _begin_trace, end_trace as _end_trace
 
     agent = ChatAgent(session_id)
     messages = agent.build_messages(message)  # 同步组装上下文，不触发压缩
+    # 跨会话长期记忆：召回命中的正文注入 system prompt；失败静默返回空，不影响主问答
+    try:
+        _lt = await recall_longterm_memories(message)
+        if _lt:
+            messages = inject_memory_block(messages, _lt)
+    except Exception as e:  # noqa: BLE001 - 记忆召回任何失败都不应阻断回复
+        logger.exception("longterm recall inject exception: %s", e)
     agent.add_user_message(message)
 
     cfg = get_agent_config()
@@ -173,6 +185,11 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str,
 
         if reply:
             agent.add_assistant_message(reply)
+            # 跨会话长期记忆提取：后台异步，不阻塞本次回复、不抛异常
+            try:
+                asyncio.create_task(extract_longterm_memory(session_id, message, reply))
+            except Exception as e:  # noqa: BLE001
+                logger.exception("longterm extract trigger exception: %s", e)
 
         # 完整转录先落盘，再后台异步压缩（不阻塞本次回复）
         try:

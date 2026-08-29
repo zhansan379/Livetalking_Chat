@@ -19,6 +19,19 @@ _DEFAULT = {
         "target_summary_chars": 600,
         "summarize_prompt": "请把以下对话历史压缩成一段简短的要点总结，保留关键信息；直接输出总结，不要加任何前缀或说明。",
         "summarize_model": None,
+        "longterm": {
+            "enabled": True,
+            "dir": None,
+            "store_types": ["user", "feedback", "project", "reference"],
+            "recall_mode": "auto",
+            "recall_top_k": 3,
+            "recall_char_limit": 800,
+            "recall_score_backend": "auto",
+            "extract_model": None,
+            "extract_trigger": "every_turn",
+            "extract_every_n_turns": 0,
+            "consolidate_threshold": 10,
+        },
     },
     "tools": {
         "max_rounds": 4,
@@ -64,6 +77,35 @@ class AgentConfig:
             "summarize_prompt", _DEFAULT["memory"]["summarize_prompt"]
         )
         self.summarize_model: str | None = mem.get("summarize_model") or None
+
+        # —— 跨会话长期记忆（memory.longterm）——
+        longterm = mem.get("longterm", {}) or {}
+        self.longterm_enabled: bool = bool(longterm.get("enabled", True))
+        # 记忆目录：null → 走 AGENT_MEMORY_DIR env 或默认 data/memory
+        self.longterm_dir: str | None = longterm.get("dir") or None
+        self.longterm_store_types: list[str] = list(
+            longterm.get("store_types") or _DEFAULT["memory"]["longterm"]["store_types"]
+        )
+        # 召回路径：auto→轻量即时注入；model→s09 模型选择
+        self.longterm_recall_mode: str = longterm.get("recall_mode", "auto") or "auto"
+        self.longterm_recall_top_k: int = int(longterm.get("recall_top_k", 3) or 3)
+        self.longterm_recall_char_limit: int = int(
+            longterm.get("recall_char_limit", 800) or 800
+        )
+        # 打分后端：auto→rerank 首选、失败退关键词；keyword→纯关键词
+        self.longterm_recall_backend: str = longterm.get(
+            "recall_score_backend", "auto"
+        ) or "auto"
+        self.longterm_extract_model: str | None = longterm.get("extract_model") or None
+        self.longterm_extract_trigger: str = longterm.get(
+            "extract_trigger", "every_turn"
+        ) or "every_turn"
+        self.longterm_extract_every_n: int = int(
+            longterm.get("extract_every_n_turns", 0) or 0
+        )
+        self.longterm_consolidate_threshold: int = int(
+            longterm.get("consolidate_threshold", 10) or 10
+        )
 
         tools = data.get("tools", {}) or {}
         ws = tools.get("web_search", {}) or {}
@@ -112,10 +154,11 @@ def get_agent_config() -> AgentConfig:
     if _config is None:
         _config = load_agent_config()
         logger.info(
-            "agent config loaded: threshold=%d keep_recent=%d target=%d enable=%s",
+            "agent config loaded: threshold=%d keep_recent=%d target=%d enable=%s longterm=%s",
             _config.compress_threshold,
             _config.keep_recent,
             _config.target_summary_chars,
             _config.memory_enabled,
+            _config.longterm_enabled,
         )
     return _config

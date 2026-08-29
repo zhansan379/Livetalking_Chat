@@ -16,6 +16,20 @@ memory:
   # 压缩使用的模型；留空(null)则复用 infra_ai 默认文本模型
   summarize_model: null
 
+  # ── 跨会话长期记忆（persistent）：把会话里学到的持久知识落盘，下次新会话按需召回 ──
+  longterm:
+    enabled: true                    # 主开关；false 时召回返回空、提取跳过（零开销）
+    dir: null                        # 记忆目录；null→data/memory，或 AGENT_MEMORY_DIR env
+    store_types: [user, feedback, project, reference]   # 允许落盘的记忆类型
+    recall_mode: auto                # auto→轻量即时注入；model→s09 模型选择（低延迟敏感部署用）
+    recall_top_k: 3                  # 召回注入的最大记忆条数
+    recall_char_limit: 800           # 注入正文总字符上限（有界）
+    recall_score_backend: auto       # auto→rerank 首选、失败退关键词；keyword→纯关键词
+    extract_model: null              # 提取用模型；留空(null)复用默认文本模型
+    extract_trigger: every_turn      # every_turn | every_n_turns
+    extract_every_n_turns: 0         # 0 = 每回合都后台提取（查重/准入后很便宜）
+    consolidate_threshold: 10        # 记忆条数达到该值触发后台整理去重
+
 tools:
   # 工具循环的防御性轮次上限（正常 1 轮即出口）
   max_rounds: 4
