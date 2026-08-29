@@ -17,11 +17,22 @@ batch_size: 16
 customvideo_config: ''
 
 # -------- TTS ----------------------------------------------------------
-tts: edgetts                   # edgetts / gpt-sovits / cosyvoice / fishtts / tencent / doubao / indextts2 / azuretts / qwentts
-REF_FILE: 'zh-CN-XiaoxiaoNeural'   # voice name or reference audio file path (wav, 16kHz, mono)
+tts: doubao                   # edgetts / gpt-sovits / cosyvoice / fishtts / tencent / doubao / indextts2 / azuretts / qwentts
+REF_FILE: 'zh_female_sajiaoxuemei_uranus_bigtts'   # Doubao speaker 音色ID; 其它引擎为音色名或参考音频路径
 REF_TEXT: ''                   # reference text for voice cloning (English or Chinese)
 TTS_SERVER: ''                 # TTS server URL, no trailing slash
 SPEECH_RATE: '+20%'            # 语速(edgetts 用，如 +20% 更快 / -15% 更慢；空=引擎默认；可被请求级 tts.rate 覆盖)
+# ---- 豆包语气调整机制(可选；缺省=引擎默认；可被请求级 datainfo['tts'] 覆盖) ----
+doubao_tone:
+  llm_tone: true               # LLM 自动驱动语气：每轮对话开始前置一次廉价探测，LLM 按情绪给语气指令；
+                               # true=开启(每轮多一次小 LLM 调用、略增首包时延)，false=关闭。仅 seed-tts-2.0 音色
+  context_texts: []            # 全局语气指令，如 ["用温柔平和的语气"]；llm_tone=true 时会当兜底；仅 seed-tts-2.0 音色
+  speech_rate: 0               # 语速 [-50,100]，0=默认，100=2倍速
+  loudness_rate: 0             # 音量 [-50,100]，0=默认，100=2倍音量
+  pitch: 0                     # 音调 [-12,12]，>0 更明亮 <0 更低沉
+  explicit_dialect: ''         # 方言 beijing/sichuan/yue...（需音色支持）
+  explicit_language: ''        # 语种 zh-cn/en/ko...（启用后只朗读该语种）
+  section_id: ''               # 多轮关联 id；留空=每会话自动生成一个(语气会话内连续)
 # ---- TTS 兜底加固(可选，去掉注释即可生效；缺省行为不变) ----
 # TTSP_RETRY: 1                # 合成失败/音频被截断时的额外重试次数（0=不重试）
 # TTSP_TIMEOUT: 30             # 单次合成超时(秒)，0=不设超时

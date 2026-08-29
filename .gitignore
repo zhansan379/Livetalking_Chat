@@ -22,3 +22,7 @@ dist
 .env
 
 logs/
+
+scripts/
+*.wav
+*.pcm

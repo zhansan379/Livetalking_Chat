@@ -92,6 +92,54 @@ def _notify_reply_start(avatar_session):
     avatar_session.send_msg(json.dumps({"status": "reply_start"}))
 
 
+async def _probe_tone(agent, message: str) -> dict:
+    """让 LLM 按最近对话判定数字人说话语气 → tts 语气字段（{} = 无特别情绪）。
+
+    这是一个廉价的前置"语气探测器"：只输出简短 JSON，作为 datainfo['tts'] 的侧信道
+    补充（context_texts 语音指令 / pitch / speech_rate / loudness_rate）。
+    - 手动传入的 datainfo['tts'] 键优先级更高（上层用 setdefault 合并，不覆盖已存在键）；
+    - LLM 判定"无特别情绪"或任何探测失败 → 返回 {}，保持全局 doubao_tone 默认，绝不
+      阻塞/劣化正常回复。
+    """
+    ctx = (agent.recent_raw_window(rounds=4) or "").strip()
+    prompt = (
+        "你是数字人主播的语气导演。根据下面的最近对话，判断此刻说话应有的语气，"
+        "只输出一个 JSON 对象（不要输出任何其它文本）。可选键：\n"
+        "- context_texts: 数组，自然语言语气指令，如 [\"用温柔平和的语气\"]、[\"用激动兴奋的语气\"]\n"
+        "- pitch: 整数 [-12,12]（>0 更明亮高昂，<0 更低沉）\n"
+        "- speech_rate: 整数 [-50,100]（100=2倍速）\n"
+        "- loudness_rate: 整数 [-50,100]（100=2倍音量）\n"
+        "若对话没有明显情绪，返回 {\"context_texts\": []}。\n\n"
+        f"最近对话：\n{ctx}\n\n用户刚刚说：{message}"
+    )
+    try:
+        from infra_ai import async_call_llm
+        raw = await async_call_llm(
+            [{"role": "user", "content": prompt}], use_json=True,
+            extra={"kind": "tone_probe"},
+        )
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return {}
+        out = {}
+        ctx_texts = data.get("context_texts")
+        if ctx_texts:
+            out["context_texts"] = ctx_texts if isinstance(ctx_texts, list) else [str(ctx_texts)]
+        elif ctx_texts == []:
+            pass  # LLM 明确"无情绪"→ 不覆盖全局 doubao_tone 默认
+        for k in ("pitch", "speech_rate", "loudness_rate"):
+            v = data.get(k)
+            if v is not None:
+                try:
+                    out[k] = int(v)
+                except (TypeError, ValueError):
+                    pass
+        return out
+    except Exception:  # noqa: BLE001 - 语气探测失败不影响回复
+        logger.exception("tone probe skipped")
+        return {}
+
+
 async def stream_llm_chat(avatar_session, session_id: str, message: str,
                           datainfo: dict = {}, trace_id: str | None = None):
     """基于 infra_ai + agent 记忆的问答：优先走工具循环，无启用工具时退回流式问答。
@@ -134,6 +182,23 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str,
     if _tid:
         datainfo["_obs"] = {"trace_id": _tid, "session_id": session_id, "parent_id": _tid}
     _notify_reply_start(avatar_session)  # 新一轮回答开始，前端清空字幕后逐句追加
+
+    # ── LLM 语气钩子（LLM 自动驱动的语气调整）────────────────────────────
+    # 仅 doubao TTS 且 doubao_tone.llm_tone 开启时生效：前置一次廉价语气探测，
+    # 把 LLM 判定的语气指令填进 datainfo['tts']（手动传入的键优先 setdefault），
+    # 让整段回复从第一句起就带上对应语气。任何失败静默，不影响正常回复。
+    try:
+        _opt = getattr(avatar_session, "opt", None)
+        _tone_cfg = getattr(_opt, "doubao_tone", None)
+        if (_opt and getattr(_opt, "tts", "") == "doubao"
+                and isinstance(_tone_cfg, dict) and _tone_cfg.get("llm_tone")):
+            _tone = await _probe_tone(agent, message)
+            if _tone:
+                datainfo.setdefault("tts", {})
+                for _k, _v in _tone.items():
+                    datainfo["tts"].setdefault(_k, _v)
+    except Exception as e:  # noqa: BLE001 - 语气钩子失败不影响回复
+        logger.exception("llm tone hook exception: %s", e)
 
     reply = None
     tr_success = True
