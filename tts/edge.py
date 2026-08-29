@@ -14,10 +14,12 @@ from registry import register
 class EdgeTTS(BaseTTS):
     def txt_to_audio(self,msg:tuple[str, dict]):
         text,textevent = msg
-        voice = self.opt.REF_FILE or "zh-CN-YunxiaNeural" 
+        voice = self.opt.REF_FILE or "zh-CN-YunxiaNeural"
         voicename = textevent.get('tts', {}).get('ref_file',voice) #self.opt.REF_FILE #"zh-CN-YunxiaNeural"
+        # 语速：请求级 tts.rate 优先，其次回退全局 opt.SPEECH_RATE，最后引擎默认
+        rate = textevent.get('tts', {}).get('rate', self.opt.SPEECH_RATE or "")
         t = time.time()
-        asyncio.new_event_loop().run_until_complete(self.__main(voicename,text))
+        asyncio.new_event_loop().run_until_complete(self.__main(voicename,text,rate))
         logger.info(f'-------edge tts time:{time.time()-t:.4f}s')
         if self.input_stream.getbuffer().nbytes<=0: #edgetts err
             logger.error('edgetts err!!!!!')
@@ -58,9 +60,9 @@ class EdgeTTS(BaseTTS):
 
         return stream
     
-    async def __main(self,voicename: str, text: str):
+    async def __main(self,voicename: str, text: str, rate: str = ""):
         try:
-            communicate = edge_tts.Communicate(text, voicename)
+            communicate = edge_tts.Communicate(text, voicename, rate=rate or "+0%")
 
             #with open(OUTPUT_FILE, "wb") as file:
             first = True

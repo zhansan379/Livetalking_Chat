@@ -77,6 +77,8 @@ def parse_args():
                         help="参考文件名或语音模型ID")
     parser.add_argument('--REF_TEXT', type=str, default=None)
     parser.add_argument('--TTS_SERVER', type=str, default='http://127.0.0.1:9880')
+    parser.add_argument('--SPEECH_RATE', type=str, default='',
+                        help="语速(edgetts): 形如 +20% 更快 / -15% 更慢；留空=引擎默认")
 
     # ─── 传输 ─────────────────────────────────────────────────────────
     parser.add_argument('--transport', type=str, default='webrtc',

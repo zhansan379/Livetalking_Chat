@@ -21,6 +21,7 @@ tts: edgetts                   # edgetts / gpt-sovits / cosyvoice / fishtts / te
 REF_FILE: ''                   # voice name or reference audio file path (wav, 16kHz, mono)
 REF_TEXT: ''                   # reference text for voice cloning (English or Chinese)
 TTS_SERVER: ''                 # TTS server URL, no trailing slash
+SPEECH_RATE: '+20%'            # 语速(edgetts 用，如 +20% 更快 / -15% 更慢；空=引擎默认；可被请求级 tts.rate 覆盖)
 
 # -------- Transport ----------------------------------------------------------
 transport: webrtc              # rtcpush / webrtc / rtmp / virtualcam
