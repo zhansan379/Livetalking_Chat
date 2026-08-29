@@ -4,21 +4,61 @@
     <meta charset="UTF-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>全屏语音对话</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🗣️</text></svg>">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='16' fill='%2308090d'/><path d='M20 28v8M28 22v20M36 16v32M44 24v16' stroke='%2351d6c2' stroke-width='4' stroke-linecap='round'/></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
+        :root{
+            --bg:#07080c;
+            --panel:#12151c;
+            --surface-hi:rgba(255,255,255,.09);
+            --surface-lo:rgba(255,255,255,.04);
+            --border:rgba(255,255,255,.10);
+            --border-strong:rgba(255,255,255,.18);
+            --text:#eef1f7;
+            --text-dim:#9aa4b6;
+            --text-faint:#6b7486;
+            --accent:#51d6c2;
+            --accent-soft:rgba(81,214,194,.16);
+            --accent-hi:#7eeada;
+            --violet:#8f8ef7;
+            --danger:#ff6b5e;
+            --warn:#f0b45a;
+            --mono:'JetBrains Mono',ui-monospace,"Cascadia Mono",Consolas,monospace;
+            --sans:'Sora','PingFang SC','Microsoft YaHei','Segoe UI',system-ui,sans-serif;
+        }
         html, body {
             margin: 0;
             height: 100%;
-            background: #000;
+            background: var(--bg);
             overflow: hidden;
-            font-family: -apple-system, "Microsoft YaHei", "Segoe UI", sans-serif;
+            color: var(--text);
+            font-family: var(--sans);
+            -webkit-font-smoothing: antialiased;
         }
 
-        /* 全屏展示层：默认撑满视口 */
+        /* ===== 全屏展示层：默认撑满视口 =====
+         * 数字人实时视频是页面唯一主视觉，故不叠加 Pexels 摄影；
+         * 只在其背后垫一层极淡的电影感环境(供 object-fit 留黑处呼吸)。
+         * TODO: 需换背景图时改此处 URL（Pexels / 本地资源均可）。*/
         #stage {
             position: fixed;
             inset: 0;
-            background: #000;
+            z-index: 0;
+            background:
+                radial-gradient(120% 80% at 70% 16%, rgba(81,214,194,.07), transparent 55%),
+                radial-gradient(130% 100% at 14% 96%, rgba(143,142,247,.05), transparent 50%),
+                linear-gradient(180deg,#0a0b10,#05060a);
+        }
+        #stage::before {
+            content: '';
+            position: absolute;
+            inset: -40px;
+            z-index: 0;
+            background: url('https://images.pexels.com/photos/3407862/pexels-photo-3407862.jpeg') center/cover no-repeat;
+            filter: blur(24px) brightness(.4) saturate(.75);
+            opacity: .34;
         }
         #video {
             position: absolute;
@@ -26,13 +66,21 @@
             width: 100%;
             height: 100%;
             object-fit: contain;
-            background: #000;
+            background: transparent;   /* 透明，让留黑处透出环境背景 */
+            z-index: 1;
         }
-        #audio {
-            display: none;
+        #audio { display: none; }
+        /* 轻微暗角，把画面与四周环境统一起来 */
+        #stage::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            z-index: 2;
+            pointer-events: none;
+            background: radial-gradient(130% 110% at 50% 50%, transparent 55%, rgba(0,0,0,.5) 100%);
         }
 
-        /* 底部悬浮操作栏 */
+        /* ===== 底部悬浮操作栏（玻璃拟态） ===== */
         #bar {
             position: fixed;
             left: 50%;
@@ -41,184 +89,265 @@
             z-index: 20;
             display: flex;
             align-items: center;
-            gap: 10px;
-            padding: 10px 14px;
-            border-radius: 999px;
-            background: rgba(20, 20, 30, 0.78);
-            backdrop-filter: blur(8px);
-            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
+            gap: 6px;
+            padding: 8px;
+            border-radius: 18px;
+            background: rgba(16,19,26,.72);
+            backdrop-filter: blur(16px) saturate(1.3);
+            border: 1px solid var(--border-strong);
+            box-shadow: 0 12px 40px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
             max-width: 92vw;
         }
         .bar-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
             border: none;
             cursor: pointer;
-            border-radius: 999px;
-            padding: 10px 18px;
-            font-size: 15px;
-            color: #fff;
-            background: #3a3f4b;
-            transition: background .15s;
+            border-radius: 12px;
+            padding: 10px 14px;
+            font-size: 14px;
+            font-weight: 500;
+            font-family: inherit;
+            color: var(--text);
+            background: transparent;
             white-space: nowrap;
+            transition: background .16s, color .16s, transform .12s;
         }
-        .bar-btn:hover {
-            background: #4a5264;
+        .bar-btn:hover { background: var(--surface-hi); }
+        .bar-btn:active { transform: translateY(1px); }
+        .bar-btn:hover svg, .bar-btn.active svg, .bar-btn.active { color: var(--accent-hi); }
+        .bar-btn .ic {
+            width: 18px; height: 18px;
+            fill: none; stroke: currentColor;
+            stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+            color: inherit;
         }
-        .bar-btn.active {
-            background: #e04a3a;
+        .bar-btn.active { background: var(--accent-soft); }
+        /* 通话按钮：独立的强调色块，激活态切换为红色 */
+        #btn-call {
+            background: linear-gradient(180deg,#2b725f,#1f5c4e);
+            color: #eafff9;
+            box-shadow: 0 4px 14px rgba(40,160,140,.35), inset 0 1px 0 rgba(255,255,255,.15);
         }
-        .bar-btn.active:hover {
-            background: #c03a2c;
+        #btn-call:hover { background: linear-gradient(180deg,#2f816b,#236b59); color: #eafff9; }
+        #btn-call:active { transform: translateY(1px); }
+        #btn-call.active {
+            background: linear-gradient(180deg,#d8564a,#c24338);
+            box-shadow: 0 4px 14px rgba(220,80,70,.35), inset 0 1px 0 rgba(255,255,255,.15);
+            color: #fff;
         }
+        #btn-call.active:hover { background: linear-gradient(180deg,#e06052,#cd4b40); color: #fff; }
+        #btn-call .ic { color: inherit; }
+        .bar-btn .mic-off { display: none; }
+        #btn-call.active .mic-off { display: block; }
+        #btn-call.active .mic { display: none; }
+
         #msg {
             flex: 1;
             min-width: 180px;
-            padding: 10px 14px;
-            font-size: 15px;
+            padding: 11px 16px;
+            font-size: 14px;
             color: #fff;
-            background: rgba(255, 255, 255, 0.12);
-            border: 1px solid rgba(255, 255, 255, 0.25);
-            border-radius: 999px;
+            font-family: inherit;
+            background: rgba(255,255,255,.05);
+            border: 1px solid var(--border-strong);
+            border-radius: 12px;
             outline: none;
+            transition: border-color .15s, background .15s, box-shadow .15s;
         }
-        #msg::placeholder {
-            color: rgba(255, 255, 255, 0.55);
-        }
+        #msg::placeholder { color: var(--text-faint); }
+        #msg:focus { background: rgba(255,255,255,.07); border-color: rgba(81,214,194,.55); box-shadow: 0 0 0 3px rgba(81,214,194,.12); }
 
-        /* 字幕浮层：底部 #bar 上方，居中半透明，不挡点击 */
+        /* ===== 字幕浮层：底部 #bar 上方，居中半透明，不挡点击 ===== */
         #subtitle {
             position: fixed;
             left: 50%;
-            bottom: 96px;
+            bottom: 108px;
             transform: translateX(-50%);
             z-index: 15;
-            max-width: 78vw;
-            padding: 8px 16px;
-            border-radius: 10px;
-            background: rgba(0, 0, 0, 0.55);
+            max-width: 76vw;
+            padding: 10px 18px;
+            border-radius: 12px;
+            background: rgba(0,0,0,.5);
+            backdrop-filter: blur(6px);
+            border: 1px solid rgba(255,255,255,.08);
             color: #fff;
-            font-size: 18px;
-            line-height: 1.5;
+            font-size: 19px;
+            line-height: 1.55;
             text-align: center;
+            text-shadow: 0 1px 3px rgba(0,0,0,.7);
             word-break: break-word;
             pointer-events: none;
+            box-shadow: 0 8px 28px rgba(0,0,0,.35);
         }
 
-        /* 模型响应耗时徽标：从检测到语音(结束)到数字人开始合成语音 */
+        /* ===== 模型响应耗时徽标：检测到语音(结束) → 数字人开始合成语音 ===== */
         #resptime {
             position: fixed;
             top: 16px;
             left: 16px;
             z-index: 16;
-            padding: 6px 12px;
-            border-radius: 8px;
-            background: rgba(0, 0, 0, 0.55);
-            border: 1px solid rgba(255, 255, 255, 0.18);
-            color: #9fc0ff;
-            font-size: 13px;
-            font-family: "Consolas", monospace;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 12px 7px 11px;
+            border-radius: 10px;
+            background: rgba(10,12,18,.6);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border-strong);
+            color: var(--accent-hi);
+            font: 500 13px var(--mono);
+            letter-spacing: .02em;
             pointer-events: none;
             opacity: 0;
-            transition: opacity .4s;
+            transform: translateY(-6px);
+            transition: opacity .4s, transform .4s;
         }
-        #resptime.measuring {
-            color: #c8b27a;
+        #resptime::before {
+            content: '';
+            width: 7px; height: 7px; border-radius: 50%;
+            background: var(--accent);
+            box-shadow: 0 0 12px rgba(81,214,194,.9);
+        }
+        #resptime.measuring { color: var(--warn); }
+        #resptime.measuring::before {
+            background: var(--warn);
+            box-shadow: 0 0 12px rgba(240,180,90,.9);
+            animation: pulse 1s ease-in-out infinite;
         }
 
-        /* 设置弹窗 (藏起原 input text / Use STUN server / asr服务器地址) */
+        /* ===== 设置弹窗 ===== */
         #modal-mask {
             position: fixed;
             inset: 0;
             z-index: 30;
-            background: rgba(0, 0, 0, 0.5);
+            background: rgba(5,6,9,.6);
+            backdrop-filter: blur(6px);
             display: none;
             align-items: center;
             justify-content: center;
         }
-        #modal-mask.open {
-            display: flex;
-        }
+        #modal-mask.open { display: flex; }
         #modal {
-            width: 460px;
+            width: 480px;
             max-width: 92vw;
             max-height: 86vh;
             overflow: auto;
-            background: #171a21;
-            color: #e6e8ee;
-            border-radius: 12px;
-            padding: 22px 24px 18px;
-            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+            background: linear-gradient(180deg,#151a23,#0f131b);
+            color: var(--text);
+            border: 1px solid var(--border-strong);
+            border-radius: 16px;
+            padding: 22px 26px 18px;
+            box-shadow: 0 24px 70px rgba(0,0,0,.65);
         }
         #modal h3 {
-            margin: 14px 0 8px;
-            font-size: 15px;
-            color: #9aa2b2;
-            font-weight: 600;
-            border-bottom: 1px solid #2a2f3a;
-            padding-bottom: 6px;
-        }
-        #modal h3:first-child {
-            margin-top: 0;
-        }
-        #modal textarea {
-            width: 100%;
-            box-sizing: border-box;
-            resize: vertical;
-            background: #0f1117;
-            color: #e6e8ee;
-            border: 1px solid #2a2f3a;
-            border-radius: 8px;
-            padding: 8px;
-            font-size: 14px;
-        }
-        #modal input[type="text"], #modal input[type="url"], #modal input[type="email"] {
-            width: 100%;
-            box-sizing: border-box;
-            background: #0f1117;
-            color: #e6e8ee;
-            border: 1px solid #2a2f3a;
-            border-radius: 8px;
-            padding: 8px;
-            font-size: 14px;
-        }
-        #modal .orig {
-            margin-bottom: 10px;
-        }
-        #modal .row {
             display: flex;
             align-items: center;
             gap: 8px;
-            margin: 8px 0 4px;
+            margin: 20px 0 10px;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-dim);
+            letter-spacing: .02em;
         }
+        #modal h3::before {
+            content: '';
+            width: 4px; height: 14px; border-radius: 2px;
+            background: var(--accent);
+            box-shadow: 0 0 8px rgba(81,214,194,.5);
+        }
+        #modal h3:first-child { margin-top: 0; }
+        #modal textarea, #modal input[type="text"], #modal input[type="url"], #modal input[type="email"] {
+            width: 100%;
+            box-sizing: border-box;
+            background: #0b0e14;
+            color: var(--text);
+            border: 1px solid var(--border-strong);
+            border-radius: 10px;
+            padding: 10px;
+            font-size: 14px;
+            font-family: inherit;
+            outline: none;
+            transition: border-color .15s, box-shadow .15s;
+        }
+        #modal textarea { resize: vertical; }
+        #modal textarea:focus, #modal input[type="text"]:focus, #modal input[type="url"]:focus, #modal input[type="email"]:focus {
+            border-color: rgba(81,214,194,.55);
+            box-shadow: 0 0 0 3px rgba(81,214,194,.12);
+        }
+        #modal .orig { margin-bottom: 12px; }
+        #modal .row {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            margin: 8px 0;
+            padding: 8px 12px;
+            border-radius: 10px;
+            background: rgba(255,255,255,.03);
+            border: 1px solid transparent;
+        }
+        #modal .row label { cursor: pointer; font-size: 14px; color: var(--text); }
+        #modal .row input[type="checkbox"] { accent-color: var(--accent); transform: scale(1.12); cursor: pointer; }
         #modal-close {
             float: right;
-            border: none;
+            border: 1px solid var(--border-strong);
             cursor: pointer;
-            background: #2a2f3a;
-            color: #e6e8ee;
-            border-radius: 8px;
-            padding: 6px 12px;
+            background: var(--surface-hi);
+            color: var(--text);
+            border-radius: 10px;
+            padding: 7px 12px;
+            font-size: 13px;
+            font-family: inherit;
         }
+        #modal-close:hover { background: var(--surface-hi); color: #fff; }
         #modal .send-btn {
             margin-top: 8px;
             border: none;
             cursor: pointer;
-            background: #3a5fd0;
-            color: #fff;
-            border-radius: 8px;
-            padding: 8px 16px;
+            background: linear-gradient(180deg,#2b725f,#1f5c4e);
+            color: #eafff9;
+            border-radius: 10px;
+            padding: 9px 16px;
+            font-size: 14px;
+            font-weight: 500;
+            font-family: inherit;
+            transition: filter .15s;
         }
+        #modal .send-btn:hover { filter: brightness(1.1); }
         .hint {
             font-size: 12px;
-            color: #7c8494;
+            color: var(--text-faint);
+            line-height: 1.6;
         }
+        #info_wslink { margin-top: 8px; color: var(--accent-hi); font-size: 13px; }
         #call-status {
-            font-size: 12px;
-            color: #7c8494;
-            text-align: center;
-            margin-top: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--text-dim);
+            margin-top: 12px;
+            min-height: 18px;
         }
+        #call-status:empty { display: none; }
+        #call-status::before {
+            content: '';
+            width: 8px; height: 8px; border-radius: 50%;
+            flex: none;
+            background: #6b7486;
+            box-shadow: 0 0 10px currentColor;
+            transition: background .2s;
+        }
+        #call-status[data-kind="listening"]::before { background: var(--accent); color: var(--accent); animation: pulse 2s infinite; }
+        #call-status[data-kind="collecting"]::before { background: var(--accent); color: var(--accent); }
+        #call-status[data-kind="speaking"]::before { background: var(--warn); color: var(--warn); }
+        #call-status[data-kind="recognizing"]::before, #call-status[data-kind="thinking"]::before, #call-status[data-kind="busy"]::before { background: var(--violet); color: var(--violet); animation: pulse 1s infinite; }
+        #call-status[data-kind="interrupt"]::before, #call-status[data-kind="error"]::before { background: var(--danger); color: var(--danger); }
+        #call-status[data-kind="warn"]::before { background: var(--warn); color: var(--warn); }
+        #call-status[data-kind="off"]::before { background: #3d4452; }
 
-        /* 首次点击前的半透明遮罩：提示用户点击进入（点击后才建连、出声音） */
+        /* ===== 首次点击前的半透明遮罩 ===== */
         #start-mask {
             position: fixed;
             inset: 0;
@@ -226,19 +355,43 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            background: rgba(0, 0, 0, 0.55);
+            background: rgba(5,6,10,.42);
+            backdrop-filter: blur(2px);
             cursor: pointer;
         }
-        #start-mask .start-hint {
-            color: #fff;
-            font-size: 20px;
-            text-align: center;
-            line-height: 1.8;
+        .start-card {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 18px;
+            padding: 36px 52px;
+            background: rgba(14,17,24,.7);
+            border: 1px solid var(--border-strong);
+            border-radius: 24px;
+            box-shadow: 0 30px 90px rgba(0,0,0,.6);
+            animation: cardIn .7s cubic-bezier(.16,1,.3,1) both;
         }
-        #start-mask .start-hint .sub {
-            display: block;
-            font-size: 13px;
-            color: #b9c0cc;
+        .start-emblem {
+            width: 78px; height: 78px;
+            border-radius: 50%;
+            display: grid;
+            place-items: center;
+            background: var(--accent-soft);
+            border: 1px solid rgba(81,214,194,.4);
+            color: var(--accent-hi);
+            animation: breath 2.6s ease-in-out infinite;
+        }
+        .start-emblem svg { width: 34px; height: 34px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+        .start-card .title { font-size: 22px; font-weight: 600; letter-spacing: .01em; }
+        .start-card .sub { text-align: center; font-size: 13px; color: var(--text-dim); line-height: 1.7; }
+
+        @keyframes cardIn { from { opacity: 0; transform: translateY(18px) scale(.98); } to { opacity: 1; transform: none; } }
+        @keyframes breath { 0%,100% { transform: scale(1); opacity: .95; } 50% { transform: scale(1.06); opacity: 1; } }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+        @media (max-width: 560px) {
+            .bar-btn { padding: 10px 11px; }
+            .bar-btn span:not(#call-label) { display: none; }  /* 窄屏只留图标+通话标签 */
         }
     </style>
 </head>
@@ -255,11 +408,24 @@
 
 <!-- 底部操作栏 -->
 <div id="bar">
-    <button id="btn-call" class="bar-btn" onclick="toggleVoice()">开启通话</button>
+    <button id="btn-call" class="bar-btn" onclick="toggleVoice()">
+        <svg class="ic mic" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="21"/></svg>
+        <svg class="ic mic-off" aria-hidden="true" viewBox="0 0 24 24"><line x1="2" y1="2" x2="22" y2="22"/><path d="M18.89 13.23A7.12 7.12 0 0 0 19 12v-2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M5 10v2a7 7 0 0 0 12 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M15 9.34V5a3 3 0 0 0-5.68-1.33" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="19" x2="12" y2="21"/></svg>
+        <span id="call-label">开启通话</span>
+    </button>
     <input id="msg" type="text" placeholder="语音识别结果 / 输入文字直接对话，回车发送" autocomplete="off"/>
-    <button id="btn-fullscreen" class="bar-btn" onclick="toggleFullscreen()">⛶ 全屏</button>
-    <button id="btn-subtitle" class="bar-btn active" onclick="toggleSubtitle()">字幕 开</button>
-    <button id="btn-settings" class="bar-btn" onclick="openSettings()">⚙ 设置</button>
+    <button id="btn-fullscreen" class="bar-btn" onclick="toggleFullscreen()" aria-label="全屏">
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+        <span>全屏</span>
+    </button>
+    <button id="btn-subtitle" class="bar-btn active" onclick="toggleSubtitle()" aria-label="字幕">
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M7 15v-3M13 15v-3M17 15v-3M10 12v3"/></svg>
+        <span id="subtitle-label">字幕 开</span>
+    </button>
+    <button id="btn-settings" class="bar-btn" onclick="openSettings()" aria-label="设置">
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+        <span>设置</span>
+    </button>
 </div>
 
 <!-- 设置弹窗 (藏起原 input text / Use STUN server / asr服务器地址) -->
@@ -291,7 +457,7 @@
         <textarea id="hotwords" rows="3" placeholder="每行一个热词，空格隔开权重&#10;例如：阿里巴巴 20&#10;　　　　hello world 40"></textarea>
         <div class="hint">一行一个关键字、空格隔开权重，识别时提高命中率。外部 FunASR 服务生效，本地 SenseVoice 端点暂不支持热词加权。</div>
 
-        <a id="wsslink" href="#" onclick="openAuth();return false;"><div id="info_wslink" style="margin-top:6px;">点此处手工授权（IOS手机）</div></a>
+        <a id="wsslink" href="#" onclick="openAuth();return false;"><div id="info_wslink">点此处手工授权（IOS手机）</div></a>
 
         <div id="call-status"></div>
     </div>
@@ -299,7 +465,13 @@
 
 <!-- 首次点击前的半透明遮罩，点击后进入（建连 + 出声） -->
 <div id="start-mask">
-    <div class="start-hint">点击进入对话<span class="sub">点击后开启声音，可输入文字或语音交流</span></div>
+    <div class="start-card">
+        <div class="start-emblem">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"/></svg>
+        </div>
+        <div class="title">点击进入对话</div>
+        <div class="sub">点击后开启声音<br/>可输入文字或语音交流</div>
+    </div>
 </div>
 
 <!-- 本地化依赖（web/lib/）：jquery + onnxruntime-web + ricky0123/vad-web，离线可用 -->
@@ -452,7 +624,7 @@
     function startResponseMeasure() {
         var el = document.getElementById('resptime');
         respStartT = Date.now();
-        if (el) { el.textContent = '⏱ 响应中...'; el.classList.add('measuring'); el.style.opacity = '1'; }
+        if (el) { el.textContent = '响应中...'; el.classList.add('measuring'); el.style.opacity = '1'; }
     }
 
     function finishResponseMeasure() {
@@ -462,7 +634,7 @@
         var el = document.getElementById('resptime');
         if (!el) return;
         el.classList.remove('measuring');
-        el.textContent = '⏱ 响应耗时 ' + (ms / 1000).toFixed(1) + 's';
+        el.textContent = '响应耗时 ' + (ms / 1000).toFixed(1) + 's';
         if (respTimer) clearTimeout(respTimer);
         respTimer = setTimeout(function () { el.style.opacity = '0'; }, 6000);
     }
@@ -476,14 +648,19 @@
     var suppressUntil = 0;           // 回声抑制截止时间戳(ms)
     var suppressMs = 800;            // 数字人开口后抑制自回声时长
 
-    function setCallStatus(msg) {
+    // 状态提示：kind 驱动左侧指示点颜色（idle/listening/speaking/collecting/
+    // recognizing/thinking/busy/interrupt/warn/error/off）
+    function setCallStatus(msg, kind) {
         var el = document.getElementById('call-status');
-        if (el) el.textContent = msg || '';
+        if (!el) return;
+        el.textContent = msg || '';
+        el.setAttribute('data-kind', kind || 'idle');
     }
 
     function renderCallBtn() {
         var b = document.getElementById('btn-call');
-        b.textContent = callOn ? '关闭通话' : '开启通话';
+        var l = document.getElementById('call-label');
+        if (l) l.textContent = callOn ? '关闭通话' : '开启通话';
         b.classList.toggle('active', callOn);
     }
 
@@ -496,10 +673,11 @@
     function toggleSubtitle() {
         subtitleOn = !subtitleOn;
         var btn = document.getElementById('btn-subtitle');
+        var lbl = document.getElementById('subtitle-label');
         var el = document.getElementById('subtitle');
         if (subtitleOn) { startSubtitle(); el.style.display = 'block'; }
         else { stopSubtitle(); el.style.display = 'none'; }
-        btn.textContent = subtitleOn ? '字幕 开' : '字幕 关';
+        if (lbl) lbl.textContent = subtitleOn ? '字幕 开' : '字幕 关';
         btn.classList.toggle('active', subtitleOn);
     }
 
@@ -538,16 +716,16 @@
     async function startCall() {
         var Uri = document.getElementById('wssip').value;
         if (!Uri.match(/^wss?:\/\//)) {
-            setCallStatus('请先在设置中填写正确的 asr 服务器地址');
+            setCallStatus('请先在设置中填写正确的 asr 服务器地址', 'error');
             return;
         }
         if (!window.vad || !window.vad.MicVAD) {
-            setCallStatus('语音检测库未加载');
+            setCallStatus('语音检测库未加载', 'error');
             return;
         }
         callOn = true;
         renderCallBtn();
-        setCallStatus('初始化语音检测...');
+        setCallStatus('初始化语音检测...', 'busy');
         try {
             myvad = await window.vad.MicVAD.new({
                 onnxWASMBasePath: "lib/",   // 本地 onnxruntime wasm
@@ -558,15 +736,15 @@
                     if (bargeInEnabled() && avatarSpeaking && Date.now() > suppressUntil) {
                         interruptAvatar();
                         suppressUntil = Date.now() + suppressMs;
-                        setCallStatus('🛑 已打断数字人...');
+                        setCallStatus('已打断数字人...', 'interrupt');
                     }
-                    if (!draining) setCallStatus('🎤 说话中...');
+                    if (!draining) setCallStatus('说话中...', 'speaking');
                 },
                 onSpeechRealStart: function () {
-                    if (!draining) setCallStatus('🎤 收集中...');
+                    if (!draining) setCallStatus('收集中...', 'collecting');
                 },
                 onVADMisfire: function () {
-                    if (!draining) setCallStatus('🎙 正在倾听...');
+                    if (!draining) setCallStatus('正在倾听...', 'listening');
                 },
                 onSpeechEnd: function (audio) {
                     if (!callOn) return;
@@ -577,10 +755,10 @@
             });
             myvad.start();
             startPolling();
-            setCallStatus('🎙 正在倾听，请说话...');
+            setCallStatus('正在倾听，请说话...', 'listening');
         } catch (e) {
             console.error('MicVAD init failed:', e);
-            setCallStatus('语音检测初始化失败（需 localhost/https + 麦克风）');
+            setCallStatus('语音检测初始化失败（需 localhost/https + 麦克风）', 'error');
             callOn = false;
             renderCallBtn();
         }
@@ -602,18 +780,18 @@
         draining = true;
         while (utteranceQueue.length && callOn) {
             var audio = utteranceQueue.shift();
-            setCallStatus('🎧 识别中...');
+            setCallStatus('识别中...', 'recognizing');
             var r = await runTranscription(audio);
             if (!r.text) {
-                setCallStatus('未识别到有效内容');
+                setCallStatus('未识别到有效内容', 'warn');
                 continue;
             }
             document.getElementById('msg').value = r.text;   // 输入框显示识别结果
-            setCallStatus('识别 → 请稍候...');
+            setCallStatus('识别 → 请稍候...', 'thinking');
             await sendChat(r.text, r.trace_id);
         }
         draining = false;
-        if (callOn) setCallStatus('🎙 正在倾听...');
+        if (callOn) setCallStatus('正在倾听...', 'listening');
     }
 
     function sendChat(text, trace_id) {
@@ -732,7 +910,7 @@
         draining = false;
         if (myvad) { try { myvad.destroy(); } catch (e) {} myvad = null; }
         renderCallBtn();
-        setCallStatus('已关闭通话');
+        setCallStatus('已关闭通话', 'off');
     }
 
     /* ==========================================================
