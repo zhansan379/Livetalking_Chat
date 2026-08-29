@@ -267,12 +267,15 @@ class ObsTest(unittest.TestCase):
         self.assertEqual(evs[0]["kind"], "asr")
         self.assertEqual(evs[0]["parent_id"], tid)
 
-        # 请求列表只出现一次，正确计为一条 chat trace
+        # 请求列表只出现一次，正确计为一条 chat trace；
+        # pipeline_ms（全链路）应 > 聊天段 elapsed_ms（因为跨到 trace 之前的 ASR）
         rows = query.requests(limit=10)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["trace_id"], tid)
+        self.assertIsNotNone(rows[0]["pipeline_ms"])
+        self.assertGreater(rows[0]["pipeline_ms"], rows[0]["elapsed_ms"])
 
-        # 聊天统计与 asr/tts 聚合各自正确
+        # 聊天统计与 asr/tts 聚合各自正确；全链路耗时聚合有值
         s = query.summary(window=None)
         self.assertEqual(s["traces"], 1)
         self.assertEqual(s["success"], 1)
@@ -280,6 +283,8 @@ class ObsTest(unittest.TestCase):
         self.assertEqual(s["asr"]["calls"], 1)
         self.assertEqual(s["asr"]["success_rate"], 1.0)
         self.assertEqual(s["tts"]["calls"], 1)
+        self.assertGreater(s["pipeline"]["avg"], 0.0)
+        self.assertGreater(s["pipeline"]["avg"], s["response_time"]["avg"])
 
     def test_pipeline_grouping(self):
         from obs import query

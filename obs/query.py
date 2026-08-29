@@ -51,6 +51,40 @@ def _percentile(sorted_vals: list[float], pct: float) -> float:
     return round(sorted_vals[idx], 1)
 
 
+def _pipeline_bounds(events: list[dict]) -> dict[str, dict]:
+    """对每条 chat 聊天 trace，算出全链路的起止 monotonic 时间点。
+
+    单条全链路 trace 已把 ASR/LLM/工具/TTS 拼在一起（asr_call 也可能异步晚于
+    trace_end 的 tts_call 都在同一 trace_id 下）。这里收集：
+      - chat_tids：拥有 kind!=asr/summary 的 root trace_start 的 tid（排除独立
+        asr trace——它没有 chat trace_start，天然不会进入全链路耗时）。
+      - 每 trace 的 min（首事件；asr_call 按其 emit 时刻减去推理耗时作为近似起点）
+        与 max（末事件，可能是异步 TTS 合成完成，晚于 trace_end）。
+    返回 {tid: {"min": float, "max": float}}，供 summary/requests 拼 pipeline_ms。
+    """
+    chat_tids: set[str] = set()
+    for ev in events:
+        if ev.get("type") == "trace_start" and ev.get("kind") not in ("asr", "summary"):
+            chat_tids.add(ev.get("trace_id"))
+    bounds: dict[str, dict] = {}
+    for ev in events:
+        tid = ev.get("trace_id")
+        if not tid or tid not in chat_tids:
+            continue
+        ms = float(ev.get("ms", 0) or 0)
+        lo = ms
+        # asr_call 的 emit 时刻 = 推理结束；以 emit 时刻减推理耗时近似语料起点
+        if ev.get("type") == "asr_call":
+            lo = ms - float(ev.get("elapsed_ms", 0) or 0)
+        b = bounds.setdefault(tid, {"min": None, "max": None})
+        b["min"] = lo if b["min"] is None else min(b["min"], lo)
+        b["max"] = max(b["max"] or 0.0, ms)
+    for tid in bounds:
+        if bounds[tid]["min"] is None:
+            bounds[tid]["min"] = bounds[tid]["max"] or 0.0
+    return bounds
+
+
 def summary(window: int | None = None) -> dict:
     # 显式传 None 表示全量；否则走配置默认
     window = query_window() if window is None else window
@@ -58,7 +92,8 @@ def summary(window: int | None = None) -> dict:
     traces = total_llm_calls = total_tool_calls = tool_rounds = 0
     success_count = 0
     in_tok = out_tok = total_tok = 0
-    response_samples: list[float] = []
+    response_samples: list[float] = []      # 聊天段（trace_start→end）
+    pipeline_samples: list[float] = []      # 全链路（ASR 起→最后一个 TTS 完成）
 
     per_model: dict[str, dict] = {}
     tool_counts: dict[str, int] = {}
@@ -70,7 +105,9 @@ def summary(window: int | None = None) -> dict:
     tts_calls = tts_ok = tts_retries = tts_trunc = 0
     tts_ms = 0.0
 
-    for ev in _read_events():
+    _events = _read_events()
+    _bounds = _pipeline_bounds(_events)  # 全链路耗时：跨 ASR/LLM/TTS 同 trace 聚合
+    for ev in _events:
         if not _in_window(ev, window):
             continue
         if ev.get("kind") == "asr":
@@ -93,6 +130,14 @@ def summary(window: int | None = None) -> dict:
                 success_count += 1
             try:
                 response_samples.append(float(ev.get("elapsed_ms", 0)))
+            except (TypeError, ValueError):
+                pass
+            # 全链路耗时段（ASR 起始 → 最后一段 TTS 完成）：对同一 trace 提取，
+            # 若含 ASR/TTS 则覆盖聊天段之外的部分；纯聊天 trace 退化为 elapsed_ms。
+            try:
+                b = _bounds.get(ev.get("trace_id"))
+                if b and b.get("min") is not None:
+                    pipeline_samples.append(b["max"] - b["min"])
             except (TypeError, ValueError):
                 pass
         elif t == "llm_call":
@@ -139,15 +184,22 @@ def summary(window: int | None = None) -> dict:
 
     response_sorted = sorted(response_samples)
     n = len(response_sorted)
+
+    def _pstats(samples: list[float]):
+        s = sorted(samples)
+        k = len(s)
+        return {
+            "avg": round(sum(s) / k, 1) if k else 0.0,
+            "p50": _percentile(s, 0.5),
+            "p90": _percentile(s, 0.9),
+        }
+
     return {
         "traces": traces,
         "success": success_count,
         "success_rate": round(success_count / traces, 4) if traces else 0.0,
-        "response_time": {
-            "avg": round(sum(response_samples) / n, 1) if n else 0.0,
-            "p50": _percentile(response_sorted, 0.5),
-            "p90": _percentile(response_sorted, 0.9),
-        },
+        "response_time": _pstats(response_samples),
+        "pipeline": _pstats(pipeline_samples),
         "total_llm_calls": total_llm_calls,
         "total_tokens": {"input": in_tok, "output": out_tok, "total": total_tok},
         "per_model": per_model_list,
@@ -174,6 +226,7 @@ def summary(window: int | None = None) -> dict:
 def requests(limit: int | None = None) -> list[dict]:
     limit = query_limit() if limit is None else limit
     events = _read_events()
+    bounds = _pipeline_bounds(events)  # 全链路起止，供每行算 pipeline_ms
     by_trace: dict[str, dict] = {}
     for ev in events:
         etype = ev.get("type")
@@ -190,12 +243,17 @@ def requests(limit: int | None = None) -> list[dict]:
     rows = []
     for tid, pair in by_trace.items():
         s, e = pair["start"], pair["end"]
+        b = bounds.get(tid)
+        pipeline_ms = None
+        if b and b["min"] is not None:
+            pipeline_ms = round(b["max"] - b["min"], 1)
         rows.append({
             "trace_id": tid,
             "ts": (e or s).get("ts"),
             "session_id": (e or s).get("session_id"),
             "msg_preview": s.get("msg_preview") if s else "",
             "elapsed_ms": (e.get("elapsed_ms") if e else None),
+            "pipeline_ms": pipeline_ms,   # 全链路：ASR 起始 → 最后一段 TTS 完成
             "success": bool(e.get("success")) if e else None,
             "tool_rounds": (e.get("tool_rounds")) if e else None,
             "llm_calls": (e.get("llm_calls")) if e else None,

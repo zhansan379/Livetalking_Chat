@@ -80,6 +80,10 @@ is_enabled()              # env 开关
 - `asr_call`: `{audio_ms, audio_len_s, inference_ms, elapsed_ms, rtf, text(截断40), text_len, empty, success, fail_reason(inference_exception/audio_too_short), err_type}` —— `kind="asr"` 事件。**全链路模式下**它是 chat trace 的首事件（`span_id/parent_id == 聊天 trace_id`），与 LLM/TTS 同处一条 trace；无 echo 的独立 ASR 则单独成一条 `trace_id`（按 `session_id`(wav_name) 关联）
 - `trace_end`: `{elapsed_ms(=响应耗时), success, fail_reason, tool_rounds, llm_calls, text_len, circuit_open}`
 
+**两套耗时口径**：
+- `response_time`：聊天段（`trace_start→trace_end`），不含 ASR 与 TTS。
+- `pipeline` / `pipeline_ms`：**全链路**（栏级聚合同一 trace 的起止）：起点为 `asr_call` 的 emit 时刻减去推理耗时（近似语料起始），终点为同 trace 内最后一个事件（异步 TTS 合成完成，可晚于 `trace_end`）。纯聊天 trace（无 ASR/TTS）退化为 `elapsed_ms`。分布式 ASR 独立 trace 的语料不参与。
+
 **响应耗时** = `trace_end.elapsed_ms`（trace_start→trace_end 的 monotonic 差）。
 **嵌套**：`llm_call` / `tool_call` 挂在 `round_span`（round 号）下，`tool_round` 挂在 trace 下，
 末轮直接给答案的 `llm_call` 父回到 trace——由 tracer 读当前 contextvars 自动打 `parent_id`。
@@ -88,8 +92,8 @@ is_enabled()              # env 开关
 
 | 端点 | 返回 |
 |---|---|
-| `GET /api/obs/summary?window=3600` | `{traces, success, success_rate, response_time:{avg,p50,p90}, total_llm_calls, total_tokens, per_model:[{model,calls,fail,avg_elapsed_ms,avg_tokens}], tool_call_counts, total_tool_calls, tool_rounds, asr:{calls,success_rate,avg_ms,total_audio_ms,avg_rtf}, tts:{calls,success_rate,avg_ms,retry_count,truncation_count}}` |
-| `GET /api/obs/requests?limit=50` | 最近 N 条聊天请求 `[{trace_id, ts, session_id, msg_preview, elapsed_ms, success, tool_rounds, llm_calls}]`（asr/summary trace 不在此列） |
+| `GET /api/obs/summary?window=3600` | `{traces, success, success_rate, response_time:{avg,p50,p90}, pipeline:{avg,p50,p90}, total_llm_calls, total_tokens, per_model:[{model,calls,fail,avg_elapsed_ms,avg_tokens}], tool_call_counts, total_tool_calls, tool_rounds, asr:{calls,success_rate,avg_ms,total_audio_ms,avg_rtf}, tts:{calls,success_rate,avg_ms,retry_count,truncation_count}}` |
+| `GET /api/obs/requests?limit=50` | 最近 N 条聊天请求 `[{trace_id, ts, session_id, msg_preview, elapsed_ms, pipeline_ms, success, tool_rounds, llm_calls}]`（asr/summary trace 不在此列） |
 | `GET /api/obs/request/<trace_id>` | 该 trace 全部事件，按 seq 升序（供时间线展开）；chat trace 会含其下的 `tts_call` 子事件 |
 | `GET /api/obs/pipeline?session_id=&limit=` | 该会话的全链路 trace 组 `{session_id, traces:[{trace_id, kind:"asr&#124;chat", session_id, ts, success, events}]}`（ASR 与 chat 拼成整条链） |
 
@@ -141,11 +145,12 @@ is_enabled()              # env 开关
 ## 前端面板 `web/obs.html`
 
 - 玻璃卡片风格，`nav 渐变 + Bootstrap + jQuery + ECharts`（`web/lib/*` 全离线，无 CDN）。
-- 指标卡片（成功率/平均响应/P50/P90/LLM 调用/总 token）＋ **全链路阶段卡**（ASR 调用/成功率/
-  平均推理/RTF、TTS 句子/成功率/平均合成/重试/截断）＋ 5 张 ECharts 图
-  （响应耗时趋势折线、per-model 平均耗时柱状、成功/失败环图、各阶段平均耗时柱状、TTS 成功率环图）。
-- 最近请求表格，行点击展开调用 `/api/obs/request/<trace_id>` 渲染按序时间线
-  （llm / tool_round / tts_call / asr_call 徽章行，工具参数与结果截断展示并做 HTML 转义）。
+- 指标卡片（成功率/平均响应/P50/P90/**全链路平均·P90**/LLM 调用/总 token）＋ **全链路阶段卡**
+  （ASR 调用/成功率/平均推理/RTF、TTS 句子/成功率/平均合成/重试/截断）＋ 5 张 ECharts 图
+  （响应耗时趋势折线〔含**全链路(ASR→TTS)虚线**对比〕、per-model 平均耗时柱状、成功/失败环图、
+  各阶段平均耗时柱状、TTS 成功率环图）。
+- 最近请求表格（含「全链路」耗时列），行点击展开调用 `/api/obs/request/<trace_id>` 渲染按序时间线
+  （asr_call → 请求开始 → llm → tool_round / tts_call → 请求结束 徽章行，工具参数与结果截断展示并做 HTML 转义）。
 - **自动刷新为手动开启**：进入页面只拉一次；导航栏「自动刷新」按钮开启 5s 轮询，
   开启期间展开的 trace 面板保持展开并同步刷新内容（`renderRequests` 重建后对仍展开的 tid 重新 `loadTrace`）。
 
