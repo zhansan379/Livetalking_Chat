@@ -127,7 +127,8 @@ async def look_at_user(args: dict, cfg, ctx=None) -> str:
         )
     try:
         text = await async_call_vlm([{"role": "user", "content": prompt}],
-                                    use_json=False, images=[data_url])
+                                    use_json=False, images=[data_url],
+                                    extra={"kind": "camera_view"})
     except Exception as e:  # noqa: BLE001 - 视觉调用失败不中断对话
         logger.warning("[camera] VLM 描述失败: %s", e)
         return "（我看到你了，但这一下说不上来具体状态）"

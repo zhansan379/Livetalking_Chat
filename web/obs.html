@@ -230,6 +230,21 @@
         }
         .span-line { display: flex; align-items: center; gap: 11px; padding: 6px 0; font-size: .82rem; border-bottom: 1px dashed var(--border); }
         .span-line:last-child { border-bottom: none; }
+        /* 工具轮分组：节标题 + 轮内成员左缩进 + 引导线 */
+        .round-header {
+            display: flex; align-items: center; gap: 8px;
+            margin: 14px 0 6px; padding: 4px 10px;
+            font-size: .74rem; font-weight: 700; letter-spacing: .4px;
+            font-family: var(--mono);
+            color: var(--accent-2); background: var(--code-bg);
+            border-left: 2px solid var(--accent); border-radius: 5px;
+        }
+        .round-header svg { width: 13px; height: 13px; }
+        .span-line.round { margin-left: 16px; position: relative; }
+        .span-line.round::before {
+            content: ""; position: absolute; left: -14px; top: 0; bottom: 0;
+            width: 1px; background: var(--border);
+        }
         .tl-icon { width: 21px; height: 21px; flex-shrink: 0; color: var(--info); }
         .tl-icon.ok { color: var(--ok); }
         .tl-icon.warn { color: var(--accent-2); }
@@ -389,9 +404,9 @@
                 <table class="req-table" id="reqTable">
                     <thead><tr>
                         <th>时间</th><th>会话</th><th>用户消息</th>
-                        <th>响应耗时</th><th>全链路</th><th>状态</th><th>工具轮</th><th>LLM</th><th></th>
+                        <th>响应耗时</th><th>全链路</th><th>状态</th><th>工具轮</th><th>工具</th><th>LLM</th><th></th>
                     </tr></thead>
-                    <tbody id="reqBody"><tr><td colspan="9" class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>加载中...</td></tr></tbody>
+                    <tbody id="reqBody"><tr><td colspan="10" class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>加载中...</td></tr></tbody>
                 </table>
             </div>
         </div>
@@ -434,6 +449,20 @@ const IC = {
 function svg(paths, extra) {
     return '<svg class="' + (extra || '') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>';
 }
+
+/* LLM 调用作用标注（后端 llm_call.purpose）→ 中文显示；未知则回退原文 */
+const LLM_PURPOSE = {
+    'camera_view': '看用户画面',
+    'tone_probe': '语气探测',
+    'tool_reply': '工具回复',
+    'chat_reply': '流式回复',
+    'compress': '摘要压缩',
+    'longterm_select': '记忆召回',
+    'longterm_extract': '记忆提取',
+    'longterm_merge': '记忆合并',
+    'reminder_reply': '提醒回复',
+};
+function purposeLabel(p) { return (LLM_PURPOSE[p] || p || '未标注'); }
 
 let trendChart, modelChart, donutChart, stageChart, ttsChart;
 let POLL = 5000;
@@ -638,10 +667,22 @@ function renderCharts(s, requests) {
 /* ---------- 最近请求表 ---------- */
 let expanded = {}; // trace_id -> 是否展开
 
+/* 工具列单元格：列出本请求用到的工具名；无工具则「—」 */
+function toolCell(r) {
+    const tools = r.tools || [];
+    if (!tools.length) return '—';
+    return tools.map(esc).join(', ');
+}
+/* 工具列 title 提示：调用次数 */
+function toolTip(r) {
+    if (!r.tool_count) return '未调用工具';
+    return r.tools.join(', ') + ' · 共 ' + r.tool_count + ' 次调用';
+}
+
 function renderRequests(requests) {
     const body = $('#reqBody');
     if (!requests.length) {
-        body.html('<tr><td colspan="9" class="empty-state">' + svg(IC.msg) + '暂无请求，发送一句对话后自动出现。</td></tr>');
+        body.html('<tr><td colspan="10" class="empty-state">' + svg(IC.msg) + '暂无请求，发送一句对话后自动出现。</td></tr>');
         $('#reqCount').text(0);
         return;
     }
@@ -660,11 +701,12 @@ function renderRequests(requests) {
             <td class="text-muted">${fmtMs(r.pipeline_ms)}</td>
             <td><span class="badge-status status-${ok}">${label}</span></td>
             <td>${r.tool_rounds == null ? '—' : r.tool_rounds}</td>
+            <td class="msg-preview" title="${esc(toolTip(r))}">${toolCell(r)}</td>
             <td>${r.llm_calls == null ? '—' : r.llm_calls}</td>
             <td><span class="arrow-indicator" style="transform:${arrow}">${svg(IC.chev)}</span></td>
         </tr>
         <tr class="trace-row" data-tid="${r.trace_id}" style="display:${expanded[r.trace_id] ? '' : 'none'}">
-            <td colspan="9">${expanded[r.trace_id] ? '<div class="trace-detail">加载中...</div>' : ''}</td>
+            <td colspan="10">${expanded[r.trace_id] ? '<div class="trace-detail">加载中...</div>' : ''}</td>
         </tr>`;
     });
     body.html(html);
@@ -689,9 +731,27 @@ function loadTrace(tid) {
 
 function renderTimeline(evs) {
     if (!evs.length) return '<div class="empty-state">' + svg(IC.msg) + '无事件</div>';
-    const ICON = { trace_start:'rocket', llm_call:'bot', tool_round:'repeat', tool_call:'wrench',
+    // 工具轮分组：span 设计保留，但页面不再把 tool_round 当普通一行重复展示，
+    // 而是转成“节标题”，把该轮内真正调用的 llm_call / tool_call 缩进成一组。
+    // 注意 seq 顺序里 tool_round 排在子事件之后，故先建 span_id→{轮号,次数} 映射，
+    // 再由子事件的 parent_id 归入对应轮，首次遇到该轮成员时补一节标题。
+    const roundOf = {};
+    for (const ev of evs) {
+        if (ev.type === 'tool_round' && ev.n_tool_calls > 0) {
+            roundOf[ev.span_id] = { round: ev.round, n: ev.n_tool_calls };
+        }
+    }
+    const shownHeader = {};
+    const ICON = { trace_start:'rocket', llm_call:'bot', tool_call:'wrench',
                    trace_end:'check', asr_call:'mic', tts_call:'volume' };
-    const lines = evs.map(ev => {
+    const lines = [];
+    for (const ev of evs) {
+        if (ev.type === 'tool_round') continue; // 已转成上方节标题
+        const r = roundOf[ev.parent_id];
+        if (r && !shownHeader[ev.parent_id]) {
+            shownHeader[ev.parent_id] = true;
+            lines.push(`<div class="round-header">${svg(IC.repeat)}工具轮 ${r.round} · ${r.n} 次调用</div>`);
+        }
         let key = ICON[ev.type] || 'dot';
         let cls = '';
         let name = '', meta = '';
@@ -703,12 +763,11 @@ function renderTimeline(evs) {
         }
         else if (ev.type === 'llm_call') {
             key = 'bot';
-            name = 'LLM ' + (ev.mode === 'stream' ? '流式' : '调用');
+            name = 'LLM ' + (ev.mode === 'stream' ? '流式' : '调用') + ' · ' + purposeLabel(ev.purpose);
             meta = `${ev.model || ev.route || '?'} · 入${ev.input_tokens||0}/出${ev.output_tokens||0}tok` +
                    (ev.has_tools ? ' · tools' : '') + (ev.success ? '' : ' · ' + (ev.fail_reason||'失败'));
             cls = ev.success ? '' : 'err';
         }
-        else if (ev.type === 'tool_round') { key = 'repeat'; name = '工具轮 #' + ev.round; meta = ev.n_tool_calls + ' 次调用' + (ev.answered ? ' · 出答案' : ''); }
         else if (ev.type === 'tool_call') {
             key = 'wrench';
             name = '工具 ' + (ev.tool || '?');
@@ -733,11 +792,12 @@ function renderTimeline(evs) {
                    (ev.success ? '' : ' · ' + esc(ev.fail_reason||'失败'));
             cls = ev.success ? '' : 'err';
         }
-        return `<div class="span-line"><span class="tl-icon ${cls}">${svg(IC[key] || IC.dot)}</span>
+        const rowCls = r ? 'span-line round' : 'span-line';
+        lines.push(`<div class="${rowCls}"><span class="tl-icon ${cls}">${svg(IC[key] || IC.dot)}</span>
             <span class="span-name">${esc(name)}</span>
             <span class="span-meta">${meta}</span>
-            ${ev.elapsed_ms != null ? `<span class="span-ms">${fmtMs(ev.elapsed_ms)}</span>` : ''}</div>`;
-    });
+            ${ev.elapsed_ms != null ? `<span class="span-ms">${fmtMs(ev.elapsed_ms)}</span>` : ''}</div>`);
+    }
     return lines.join('');
 }
 

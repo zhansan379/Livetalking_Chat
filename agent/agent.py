@@ -148,6 +148,7 @@ class ChatAgent:
         )
         call_kwargs: dict = {
             "use_json": False,
+            "extra": {"kind": "compress"},
             "model_kwargs": {"max_tokens": cfg.max_summary_tokens},
         }
         if cfg.summarize_model:

@@ -345,7 +345,7 @@ class ReminderManager:
             final = await run_tool_loop(messages, tools, cfg)
         else:
             from infra_ai import async_call_llm
-            final = await async_call_llm(messages)
+            final = await async_call_llm(messages, extra={"kind": "reminder_reply"})
         return _sanitize(final) if final else None
 
     async def _handle_fire(self, rem: Reminder, now: float) -> None:

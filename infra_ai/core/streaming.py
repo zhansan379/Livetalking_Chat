@@ -54,6 +54,7 @@ async def _stream_single_model(
     messages: list[dict[str, Any]],
     use_json: bool,
     label: str,
+    purpose: str | None = None,
 ) -> "AsyncIterator[str]":
     """单个模型的流式调用（内部实现）。"""
     from infra_ai.core.health_store import get_health_store
@@ -153,6 +154,7 @@ async def _stream_single_model(
             "input_tokens": usage.get('input_tokens', 0),
             "output_tokens": usage.get('output_tokens', 0),
             "total_tokens": usage.get('total_tokens', 0),
+            "purpose": purpose,   # 调用方标注的作用（如 chat_reply）
             "success": succeeded,
             "fail_reason": None,
             "err_type": None,
@@ -170,6 +172,8 @@ async def _stream_single_model(
 async def async_stream_call_llm(
     messages: list[dict[str, Any]],
     use_json: bool = False,
+    *,
+    purpose: str | None = None,
 ) -> "AsyncIterator[str]":
     """
     流式调用文本 LLM，逐个 token yield。支持多模型故障转移。
@@ -194,7 +198,7 @@ async def async_stream_call_llm(
 
             async def _produce(target, bridge):
                 try:
-                    async for token in _stream_single_model(target, messages, use_json, "chat"):
+                    async for token in _stream_single_model(target, messages, use_json, "chat", purpose):
                         bridge.on_token(token)
                     bridge.on_complete()
                 except Exception as e:
@@ -213,6 +217,6 @@ async def async_stream_call_llm(
     # 单模型回退
     async for token in _stream_single_model(
         ModelTarget(model_id="default", candidate=None, model_name=_get_text_model_name()),
-        messages, use_json, "text",
+        messages, use_json, "text", purpose,
     ):
         yield token

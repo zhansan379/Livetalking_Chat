@@ -243,6 +243,10 @@ def requests(limit: int | None = None) -> list[dict]:
                 by_trace[tid] = {"start": ev, "end": None}
         elif etype == "trace_end" and tid in by_trace:
             by_trace[tid]["end"] = ev
+        elif etype == "tool_call":
+            # 收集本轮请求实际调用的工具名（不去重，保持每次调用的先后顺序）
+            rec = by_trace.setdefault(tid, {"start": None, "end": None})
+            rec.setdefault("tools", []).append(ev.get("tool", "?"))
 
     rows = []
     for tid, pair in by_trace.items():
@@ -251,6 +255,9 @@ def requests(limit: int | None = None) -> list[dict]:
         pipeline_ms = None
         if b and b["min"] is not None:
             pipeline_ms = round(b["max"] - b["min"], 1)
+        # 工具列：按实际调用顺序列出的工具名清单（不去重，同工具多次调用会重复出现）
+        tools_names = pair.get("tools") or []
+        tool_count = len(tools_names)
         rows.append({
             "trace_id": tid,
             "ts": (e or s).get("ts"),
@@ -261,6 +268,8 @@ def requests(limit: int | None = None) -> list[dict]:
             "pipeline_ms": pipeline_ms,   # 全链路：ASR 起始 → 最后一段 TTS 完成
             "success": bool(e.get("success")) if e else None,
             "tool_rounds": (e.get("tool_rounds")) if e else None,
+            "tools": tools_names,
+            "tool_count": tool_count,
             "llm_calls": (e.get("llm_calls")) if e else None,
         })
     rows.sort(key=lambda r: r.get("ts") or "", reverse=True)

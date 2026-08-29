@@ -324,6 +324,7 @@ async def _select_by_model(query: str, docs: list[str], cfg) -> list[int]:
             {"role": "user", "content": prompt},
         ],
         use_json=True,
+        extra={"kind": "longterm_select"},
         model_kwargs={"max_tokens": 64},
     )
     arr = _extract_json_array(raw or "")
@@ -466,6 +467,7 @@ async def _call_extract(user_msg: str, reply: str, cfg, context: str = "") -> li
             {"role": "user", "content": conv},
         ],
         use_json=True,
+        extra={"kind": "longterm_extract"},
         model_name=cfg.longterm_extract_model,
         model_kwargs={"max_tokens": 1024},
     )
@@ -592,6 +594,7 @@ async def _call_consolidate(records: list[MemoryRecord]) -> list[MemoryRecord]:
             {"role": "user", "content": present},
         ],
         use_json=True,
+        extra={"kind": "longterm_merge"},
         model_kwargs={"max_tokens": 4096},
     )
     arr = _extract_json_array(raw or "")

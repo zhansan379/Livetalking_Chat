@@ -588,6 +588,7 @@ async def _invoke_with_retry(
                 "input_tokens": usage.get('input_tokens', 0),
                 "output_tokens": usage.get('output_tokens', 0),
                 "total_tokens": usage.get('total_tokens', 0),
+                "purpose": (extra or {}).get("kind"),   # 调用方标注的作用（tone_probe 等）
                 "success": True,
                 "fail_reason": None,
                 "err_type": None,

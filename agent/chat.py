@@ -195,7 +195,7 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str,
             full_reply = []
             buf = ""
             try:
-                async for token in async_stream_call_llm(messages):
+                async for token in async_stream_call_llm(messages, purpose="chat_reply"):
                     if not token:
                         continue
                     full_reply.append(token)
