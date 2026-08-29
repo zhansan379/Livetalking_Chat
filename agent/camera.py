@@ -111,11 +111,20 @@ async def look_at_user(args: dict, cfg, ctx=None) -> str:
         return "（暂时看不到你——请点开页面上的「摄像头」开关并允许浏览器授权摄像头，我再试试）"
 
     data_url = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
-    prompt = (
-        "这是此刻正在和你说话的人的实时摄像头画面。请用简短、口语化的中文，"
-        "描述用户当前的状态：情绪/表情、动作、大致穿着，以及画面里与你对话相关的环境信息。"
-        "画面里看不到人脸或画面很模糊就如实说明；不要提『摄像头/画面』这类词，直接描述你看到的内容。"
-    )
+    # instructions：主模型可选参数，本意是让 VLM「专门分析某方面」——优先于默认的整体描述
+    focus = ((args or {}).get("instructions") or "").strip()
+    if focus:
+        prompt = (
+            "这是此刻正在和你说话的人的实时摄像头画面。请用简短、口语化的中文，"
+            "专门分析下面这个关注点，答案要具体、只依据画面里看得见的证据，不要臆测；"
+            f"相关细节看不清就如实说明。关注点：{focus}。"
+        )
+    else:
+        prompt = (
+            "这是此刻正在和你说话的人的实时摄像头画面。请用简短、口语化的中文，"
+            "描述用户当前的状态：情绪/表情、动作、大致穿着，以及画面里与你对话相关的环境信息。"
+            "画面里看不到人脸或画面很模糊就如实说明；不要提『摄像头/画面』这类词，直接描述你看到的内容。"
+        )
     try:
         text = await async_call_vlm([{"role": "user", "content": prompt}],
                                     use_json=False, images=[data_url])
