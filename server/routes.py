@@ -185,9 +185,11 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str,
 
         if reply:
             agent.add_assistant_message(reply)
-            # 跨会话长期记忆提取：后台异步，不阻塞本次回复、不抛异常
+            # 跨会话长期记忆提取：后台异步，不阻塞本次回复、不抛异常。
+            # 带上最近几轮原文上下文，让提取器能识别"自介/身份"类陈述。
             try:
-                asyncio.create_task(extract_longterm_memory(session_id, message, reply))
+                _ctx = agent.recent_raw_window()
+                asyncio.create_task(extract_longterm_memory(session_id, message, reply, _ctx))
             except Exception as e:  # noqa: BLE001
                 logger.exception("longterm extract trigger exception: %s", e)
 

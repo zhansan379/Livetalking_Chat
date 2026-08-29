@@ -380,8 +380,10 @@ def _should_extract_now() -> bool:
     return _extract_round_ctr % n == 0
 
 
-async def extract_longterm_memory(session_id: str, last_user_msg: str, reply: str) -> None:
-    """后台任务入口（与 compress_and_save 同款）：提取并落盘，异常不外抛。"""
+async def extract_longterm_memory(session_id: str, last_user_msg: str, reply: str,
+                                  context: str = "") -> None:
+    """后台任务入口（与 compress_and_save 同款）：提取并落盘，异常不外抛。
+    context：最近几轮原文（含本轮），供提取器识别自介/身份类陈述；空则退回单轮。"""
     cfg = get_agent_config()
     if not cfg.longterm_enabled:
         return
@@ -392,7 +394,7 @@ async def extract_longterm_memory(session_id: str, last_user_msg: str, reply: st
     try:
         from obs import new_trace
         with new_trace(session_id, kind="longterm_extract"):
-            candidates = await _call_extract(last_user_msg, reply, cfg)
+            candidates = await _call_extract(last_user_msg, reply, cfg, context)
             if not candidates:
                 return
             existing = list_memories()
@@ -418,19 +420,25 @@ async def extract_longterm_memory(session_id: str, last_user_msg: str, reply: st
         logger.exception("extract_longterm_memory failed: %s", e)
 
 
-async def _call_extract(user_msg: str, reply: str, cfg) -> list[dict]:
+async def _call_extract(user_msg: str, reply: str, cfg, context: str = "") -> list[dict]:
     """调 LLM 提取候选记忆（只输出 JSON 数组），解析失败返回 []。"""
     from infra_ai import async_call_llm
     prompt = (
-        "你是记忆提取器。从下面这轮简短对话中，提取值得跨会话保存的持久知识，"
+        "你是记忆提取器。从下面这段对话中，提取值得跨会话保存的持久知识，"
         "忽略一次性/临时性信息。只输出 JSON 数组，每项格式：\n"
         '{"type": "user|feedback|project|reference", "name": "短名", '
         '"description": "一句话概括", "body": "具体内容", "scope": "persistent|current_task"}\n'
         'type 说明：user=用户画像/偏好；feedback=对助手仍适用的反馈；'
         "project=稳定的项目/领域事实；reference=外部线索。\n"
-        "scope 为 current_task 的（仅本次任务有效）不要给出。若无值得保存的，返回 []。"
+        "scope 为 current_task 的（仅本次任务有效）不要给出。\n"
+        "特别注意：若对话中用户陈述了自己的身份/背景/境况（如\"我是大四应届生\"、"
+        "\"我学会计\"），即使没说\"记住\"也属于 user 型持久画像，可识别就要提取。"
+        "若无值得保存的，返回 []。"
     )
-    conv = f"用户：{user_msg}\n助手：{reply}"
+    if context and context.strip():
+        conv = context.strip()  # 已含本轮 user+assistant（含 reply）
+    else:
+        conv = f"用户：{user_msg}\n助手：{reply}"
     raw = await async_call_llm(
         [
             {"role": "system", "content": prompt},

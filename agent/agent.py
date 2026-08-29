@@ -66,6 +66,20 @@ class ChatAgent:
         msgs.append({"role": "user", "content": user_message})
         return msgs
 
+    # ─── 长期记忆提取上下文 ───────────────────────────────────────────────
+    def recent_raw_window(self, rounds: int = 4) -> str:
+        """
+        最近 rounds 轮原文（user/assistant 交织，append-only _messages 末段），
+        供长期记忆提取器识别"自介/身份"类陈述的上下文；不含 System/摘要。
+        """
+        msgs = self._messages[-2 * rounds:]
+        lines = []
+        for m in msgs:
+            content = (m.get("content") or "").strip()
+            if content:
+                lines.append(f"{m.get('role', 'user')}: {content}")
+        return "\n".join(lines)
+
     # ─── 压缩判断 ──────────────────────────────────────────────────────────
     def should_compress(self) -> bool:
         """自上次压缩后再积累的新轮次是否达到阈值。"""
