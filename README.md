@@ -8,7 +8,7 @@
 
 ---
 
-<img width="2549" height="1191" alt="image" src="https://github.com/user-attachments/assets/359c0420-e716-4eec-b3e7-f85f62a6b51c" />
+<img width="2549" height="1191" alt="image" src="https://github.com/user-attachments/assets/0d07cea1-8769-4bed-a92a-a65255e89260" />
 
 
 ## ✨ 功能特性
