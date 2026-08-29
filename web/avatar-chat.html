@@ -103,6 +103,27 @@
             pointer-events: none;
         }
 
+        /* 模型响应耗时徽标：从检测到语音(结束)到数字人开始合成语音 */
+        #resptime {
+            position: fixed;
+            top: 16px;
+            left: 16px;
+            z-index: 16;
+            padding: 6px 12px;
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.55);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            color: #9fc0ff;
+            font-size: 13px;
+            font-family: "Consolas", monospace;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity .4s;
+        }
+        #resptime.measuring {
+            color: #c8b27a;
+        }
+
         /* 设置弹窗 (藏起原 input text / Use STUN server / asr服务器地址) */
         #modal-mask {
             position: fixed;
@@ -229,6 +250,7 @@
     <audio id="audio" autoplay="true"></audio>
     <input type="hidden" id="sessionid" value="0"/>
     <div id="subtitle"></div>
+    <div id="resptime"></div>
 </div>
 
 <!-- 底部操作栏 -->
@@ -421,6 +443,30 @@
      *    getUserMedia 的 echoCancellation + 开口抑制窗口 + 可关开关。
      * ========================================================== */
 
+    /* ==========================================================
+     * 3.5 模型响应耗时：检测到语音(结束) → 数字人开始合成语音
+     * ========================================================== */
+    var respStartT = null;           // 本次测量开始时间戳(ms)
+    var respTimer = null;            // 徽标淡出定时器
+
+    function startResponseMeasure() {
+        var el = document.getElementById('resptime');
+        respStartT = Date.now();
+        if (el) { el.textContent = '⏱ 响应中...'; el.classList.add('measuring'); el.style.opacity = '1'; }
+    }
+
+    function finishResponseMeasure() {
+        if (respStartT === null) return;
+        var ms = Date.now() - respStartT;
+        respStartT = null;
+        var el = document.getElementById('resptime');
+        if (!el) return;
+        el.classList.remove('measuring');
+        el.textContent = '⏱ 响应耗时 ' + (ms / 1000).toFixed(1) + 's';
+        if (respTimer) clearTimeout(respTimer);
+        respTimer = setTimeout(function () { el.style.opacity = '0'; }, 6000);
+    }
+
     var callOn = false;              // 语音通话开关
     var myvad = null;                // MicVAD 实例
     var utteranceQueue = [];         // 待识别的语句 FIFO
@@ -469,6 +515,8 @@
                 el.textContent = '';
             } else if (m.status === 'start' && m.text) {
                 el.textContent += m.text;
+                // 语音开始合成 → 结算本次响应耗时（仅在等待测量时结算一次）
+                if (respStartT !== null) finishResponseMeasure();
             }
         };
         subtitleES.onerror = function () {};  // EventSource 自动重连，忽略
@@ -522,6 +570,7 @@
                 },
                 onSpeechEnd: function (audio) {
                     if (!callOn) return;
+                    startResponseMeasure();       // 检测到语音(结束) → 开始计时
                     utteranceQueue.push(audio);   // 入队，绝不丢弃
                     drainQueue();
                 },
@@ -738,7 +787,8 @@
         $('#msg').on('keydown', function (e) {
             if (e.key === 'Enter') {
                 e.preventDefault();
-                sendChat($(this).val().trim());
+                var t = $(this).val().trim();
+                if (t) { startResponseMeasure(); sendChat(t); }
                 $(this).val('');
             }
         });
