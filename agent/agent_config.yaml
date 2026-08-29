@@ -51,3 +51,21 @@ tools:
     enabled: true      # true→数字人可用摄像头「看你一眼」（需浏览器开摄像头开关并授权）。
                        # 后端用配置的 VLM（LLM_ROUTING.vision）描述画面；无帧则如实说「看不到」。
                        # 隐私：按需抓一帧即弃，不进对话历史、不落盘。
+  # 通用文件工具（插口④；非能力，与 web_search/weather 平级）——会话范围内读写上传文件
+  files:
+    enabled: true      # true→会话内 list_files / read_file 可用（简历/JD 等上传文件）
+    upload_dir: null   # 上传根目录；null→data/uploads（会话共享暂存区）
+
+# ── 可插拔能力（下述默认值来自各能力 config_defaults()，此处可覆盖）──
+capabilities:
+  hello:
+    enabled: false     # 框架自检冒烟能力，默认关闭；验框架时可临时打开
+  interview:
+    enabled: true              # 模拟面试能力（模型驱动、state 制导、按态暴露工具）
+    default_role: "前端"        # 缺省岗位方向
+    default_level: "初级"       # 缺省难度
+    max_questions: 5
+    idle_timeout_s: 1800
+    remember_policy: identity_only   # identity_only | full | none
+    bank_override: null               # null→内置 bank_data.yaml
+    recall_top_k: 8

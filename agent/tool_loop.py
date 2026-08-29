@@ -26,6 +26,9 @@ from agent.reminder import humanize_delay, reminder_manager, validate_cron as _v
 # 摄像头「看用户」工具（按 session 绑定浏览器，按需抓一帧给视觉模型）
 from agent.camera import look_at_user
 
+# 通用文件工具（list_files/read_file；与 web_search/weather 平级，非能力）
+from agent.files import _file_tool_specs as _file_tool_specs
+
 # 观测：随 obs 包可用与否优雅降级（观测失败不影响工具循环）
 try:
     from obs import emit, round_span
@@ -452,19 +455,32 @@ TOOL_REGISTRY: dict[str, dict] = {
         "handler": look_at_user,
         "config_flag": "tool_look_at_user_enabled",
     },
+    # 通用文件工具（插口④；非能力，与 web_search/weather 平级）。会话范围内读写上传文件
+    **{
+        spec["name"]: {**spec, "config_flag": "tool_files_enabled"}
+        for spec in _file_tool_specs()
+    },
     # 以后新增工具：在这里加一个 entry，并在 agent_config.yaml 里加 tools.<name>.enabled
 }
 
 
+def _is_cap_flag(flag) -> bool:
+    """是否为能力工具的 config_flag（形如 ("cap", name) 的二元组）。"""
+    return isinstance(flag, (list, tuple)) and len(flag) == 2 and flag[0] == "cap"
+
+
 def list_enabled_tools(cfg) -> list[str]:
-    """返回配置里已启用的工具名。
+    """返回配置里已启用的【全局】工具名（非能力工具）。
 
     约定：默认读配置字段 tool_<name>_enabled；若注册表 entry 声明了 config_flag，
     则多个工具可共用同一个开关（如提醒一族共用 tool_reminder_enabled）。
+    能力工具（config_flag=("cap", name) 元组）不在此列——它们由 hub.session_tools
+    按会话+状态条件注入，只在 chat 路径暴露。
     """
     return [
         name for name, entry in TOOL_REGISTRY.items()
-        if getattr(cfg, entry.get("config_flag", f"tool_{name}_enabled"), False)
+        if not _is_cap_flag(entry.get("config_flag"))
+        and getattr(cfg, entry.get("config_flag", f"tool_{name}_enabled"), False)
     ]
 
 

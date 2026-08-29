@@ -123,7 +123,9 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str,
     """
     from agent import ChatAgent
     from agent.config import get_agent_config
-    from agent.tool_loop import ToolContext, build_tools, list_enabled_tools, run_tool_loop
+    from agent.tool_loop import ToolContext, build_tools, run_tool_loop
+    # 插口②③：能力目录注入 + 按会话+状态条件暴露工具（chat 感知不到具体能力）
+    from capabilities.hub import capability_system_block, session_tools
     from agent.longterm import (
         extract_longterm_memory,
         inject_memory_block,
@@ -143,7 +145,15 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str,
     agent.add_user_message(message)
 
     cfg = get_agent_config()
-    tools = build_tools(list_enabled_tools(cfg))
+    # 插口②：把启用能力的目录 + 当前会话激活态片段注入 system prompt（只读；无内容则跳过）
+    try:
+        _cap_blk = capability_system_block(session_id, cfg)
+        if _cap_blk:
+            messages.append({"role": "system", "content": _cap_blk})
+    except Exception as e:  # noqa: BLE001 - 能力注入失败不应阻断主问答
+        logger.exception("capability system block inject exception: %s", e)
+    # 插口③：按会话+状态条件暴露工具子集（能力工具仅进行中相关子集；全局工具照常）
+    tools = build_tools(session_tools(session_id, cfg))
     # trace_id：复用来自 ASR 服务端下发的回合 id（浏览器 echo），从而把
     # ASR→LLM/工具→TTS 拼成一条 trace；缺省则自旋一条（独立 trace，向后兼容）。
     _tid = _begin_trace(session_id, (message or "")[:200], tool_mode=bool(tools),

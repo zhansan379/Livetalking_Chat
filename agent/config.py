@@ -53,7 +53,13 @@ _DEFAULT = {
         "look_at_user": {
             "enabled": False,
         },
+        "files": {
+            "enabled": True,
+            "upload_dir": None,
+            "read_max_chars": 12000,
+        },
     },
+    "capabilities": {},
 }
 
 
@@ -146,10 +152,74 @@ class AgentConfig:
         w_camera = tools.get("look_at_user", {}) or {}
         self.tool_look_at_user_enabled: bool = bool(w_camera.get("enabled", False))
 
+        w_files = tools.get("files", {}) or {}
+        self.tool_files_enabled: bool = bool(w_files.get("enabled", True))
+        self.file_upload_dir: str = str(w_files.get("upload_dir") or "data/uploads")
+        self.file_read_max_chars: int = int(w_files.get("read_max_chars", 12000) or 12000)
+
+        # —— 可插拔能力配置（通用命名空间，非硬编码任何能力名）——
+        # 值由 load_agent_config 用各能力 config_defaults() 拼默认、再叠用户覆盖。
+        self.capabilities: dict[str, dict] = dict(data.get("capabilities", {}) or {})
+
+    # ── 面试能力专属参数（读 capabilities.interview.*；用 cap_param 避免硬编码分支）─
+    @property
+    def interview_default_role(self):
+        return self.cap_param("interview", "default_role")
+
+    @property
+    def interview_default_level(self):
+        return self.cap_param("interview", "default_level", "初级")
+
+    @property
+    def interview_max_questions(self):
+        return int(self.cap_param("interview", "max_questions", 5) or 5)
+
+    @property
+    def interview_recall_top_k(self):
+        return int(self.cap_param("interview", "recall_top_k", 8) or 8)
+
+    @property
+    def interview_bank_override(self):
+        return self.cap_param("interview", "bank_override")
+
+    @property
+    def interview_store_dir(self):
+        return self.cap_param("interview", "store_dir")
+
+    # ── 通用能力配置访问器（插口①）───────────────────────────────────────
+    def cap_enabled(self, name: str, default: bool = False) -> bool:
+        """某能力是否启用：读 capabilities.<name>.enabled（缺省用 default）。"""
+        return bool((self.capabilities.get(name) or {}).get("enabled", default))
+
+    def cap_param(self, name: str, key: str, default=None):
+        """读能力专属参数 capabilities.<name>.<key>（缺省用 default）。"""
+        return (self.capabilities.get(name) or {}).get(key, default)
+
     @property
     def max_summary_tokens(self) -> int:
         """用于 max_tokens 的硬封顶：预留 ~1.5 倍余量（中文约 1 字/token）。"""
         return max(64, int(self.target_summary_chars * 1.5))
+
+
+def _merge_capability_defaults(raw: dict) -> dict:
+    """把各能力自带默认配置并入 capabilities 覆盖节（用户配置优先）。
+
+    延迟 import hub：规避 配置构造期(hub 需 import 能力包) 与 hub→config 的循环依赖。
+    缺任一能力的默认值不影响整体配置加载。
+    """
+    caps: dict[str, dict] = {}
+    try:
+        from capabilities.hub import capability_config_defaults
+        for cap_name, defaults in capability_config_defaults().items():
+            override = (raw.get("capabilities") or {}).get(cap_name) or {}
+            caps[cap_name] = _merge(defaults or {}, override)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("capability defaults merge failed (%s), keep user-only", e)
+    for cap_name, override in (raw.get("capabilities") or {}).items():
+        caps.setdefault(cap_name, override or {})
+    out = dict(raw)
+    out["capabilities"] = caps
+    return out
 
 
 def load_agent_config() -> AgentConfig:
@@ -160,6 +230,7 @@ def load_agent_config() -> AgentConfig:
     except Exception as e:  # noqa: BLE001 - 任何加载失败都不应让服务崩掉
         logger.warning("agent config load failed (%s), use defaults", e)
         raw = {}
+    raw = _merge_capability_defaults(raw)
     return AgentConfig(_merge(_DEFAULT, raw))
 
 

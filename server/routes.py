@@ -6,6 +6,7 @@
 import asyncio
 import base64
 import json
+import os
 from aiohttp import web
 
 from utils.logger import logger
@@ -90,6 +91,43 @@ async def humanaudio(request):
         return json_ok()
     except Exception as e:
         logger.exception('humanaudio exception:')
+        return json_error(str(e))
+
+
+async def upload_file(request):
+    """通用文件上传（插口④）：multipart 接收 {sessionid, file} → data/uploads/<sessionid>/。
+
+    能力无关暂存区，会话共享、一份副本多方可读；由 agent 通用工具 list_files/
+    read_file 在会话范围内读取。仅暂存，生命周期/配额属后续里程碑。
+    """
+    try:
+        from agent.files import _session_dir, _SAFE_SID
+        from agent.config import get_agent_config
+
+        form = await request.post()
+        sessionid = str(form.get('sessionid', ''))
+        # 仅保留安全字符 + 目录界定——无有效会话则拒绝（防路径穿越/越权目录）
+        sid_dir = _session_dir(get_agent_config(), sessionid)
+        if sid_dir is None:
+            return json_error("invalid sessionid")
+
+        fileobj = form['file']
+        fname = str(fileobj.filename or 'file').strip()
+        # 文件名为数据，只取裸文件名（去路径）；安全字符过滤后再装回会话目录
+        fname = os.path.basename(fname.replace('\\', '/'))
+        fname = _SAFE_SID.sub('_', fname) or 'file'
+
+        os.makedirs(sid_dir, exist_ok=True)
+        dest = os.path.join(sid_dir, fname)
+        data = fileobj.file.read()
+        with open(dest, 'wb') as f:
+            f.write(data)
+
+        from utils.logger import logger as _log
+        _log.info("[files] uploaded %s (%d bytes) -> data/uploads/%s/", fname, len(data), sessionid)
+        return json_ok({'path': f'{sessionid}/{fname}', 'size': len(data)})
+    except Exception as e:
+        logger.exception('upload_file exception:')
         return json_error(str(e))
 
 
@@ -346,6 +384,9 @@ def setup_routes(app):
     app.router.add_get('/api/reminders', api_reminders_list)
     app.router.add_post('/api/reminders', api_reminders_create)
     app.router.add_post('/api/reminders/cancel', api_reminders_cancel)
+
+    # ── 通用文件上传（插口④：会话共享暂存区）──
+    app.router.add_post('/api/files/upload', upload_file)
 
     # ── Local ASR endpoint (SenseVoice/FunASR) ── Issue #604 ──
     try:

@@ -1,5 +1,8 @@
 __pycache__/
 build/
+
+# Claude Code 内部 worktree（不进版本库）
+.claude/worktrees/
 *.egg-info/
 *.so
 *.mp4
