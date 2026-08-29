@@ -12,6 +12,10 @@ from .writer import iter_event_files
 # 事件读取限制：文件再大也最多扫描前 max_read 事件，防止失控崩服务
 _MAX_READ = 200_000
 
+# 后台维护类 trace：不参与用户请求统计/列表/时间线。新增后台任务
+# （如长期记忆提取/整理）需把 kind 纳入此处，否则会污染图表与指标。
+_BACKGROUND_KINDS = ("summary", "longterm_extract", "longterm_consolidate")
+
 
 def _read_events() -> list[dict]:
     events: list[dict] = []
@@ -64,7 +68,7 @@ def _pipeline_bounds(events: list[dict]) -> dict[str, dict]:
     """
     chat_tids: set[str] = set()
     for ev in events:
-        if ev.get("type") == "trace_start" and ev.get("kind") not in ("asr", "summary"):
+        if ev.get("type") == "trace_start" and ev.get("kind") not in ("asr", *_BACKGROUND_KINDS):
             chat_tids.add(ev.get("trace_id"))
     bounds: dict[str, dict] = {}
     for ev in events:
@@ -121,8 +125,8 @@ def summary(window: int | None = None) -> dict:
                 if float(ev.get("inference_ms", 0) or 0):
                     asr_rtfs.append(float(ev.get("rtf", 0) or 0))
             continue
-        if ev.get("kind") == "summary":
-            continue  # 压缩摘要是维护成本，不参与用户请求统计
+        if ev.get("kind") in _BACKGROUND_KINDS:
+            continue  # 后台维护 trace（压缩/长期记忆等）不参与用户请求统计
         t = ev.get("type")
         if t == "trace_end":
             traces += 1
@@ -231,8 +235,8 @@ def requests(limit: int | None = None) -> list[dict]:
     for ev in events:
         etype = ev.get("type")
         tid = ev.get("trace_id")
-        # ASR/压缩 trace 都不进聊天请求列表（ASR 走 pipeline 单独看）
-        if not tid or ev.get("kind") in ("summary", "asr"):
+        # ASR/后台维护 trace 都不进聊天请求列表（ASR 走 pipeline 单独看）
+        if not tid or ev.get("kind") in ("asr", *_BACKGROUND_KINDS):
             continue
         if etype == "trace_start":
             if tid not in by_trace:
@@ -251,6 +255,7 @@ def requests(limit: int | None = None) -> list[dict]:
             "trace_id": tid,
             "ts": (e or s).get("ts"),
             "session_id": (e or s).get("session_id"),
+            "kind": (s.get("kind") if s else None),   # 供前端区分后台/聊天 trace
             "msg_preview": s.get("msg_preview") if s else "",
             "elapsed_ms": (e.get("elapsed_ms") if e else None),
             "pipeline_ms": pipeline_ms,   # 全链路：ASR 起始 → 最后一段 TTS 完成
@@ -285,7 +290,7 @@ def pipeline(session_id: str, limit: int = 20) -> list[dict]:
     for ev in events:
         if ev.get("session_id") != session_id:
             continue
-        if ev.get("kind") == "summary":
+        if ev.get("kind") in _BACKGROUND_KINDS:
             continue
         tid = ev.get("trace_id")
         if not tid:
