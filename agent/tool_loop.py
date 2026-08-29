@@ -388,11 +388,15 @@ TOOL_REGISTRY: dict[str, dict] = {
             "「看你一眼」：按需抓取正在和你对话的这个人的实时摄像头画面，返回对用户当下状态的描述"
             "（默认：情绪/表情、动作、穿着、与对话相关的环境信息）。\n"
             "使用场景：用户主动让你看他/她（如『你看看我』『你看着我说』『你看我这样行吗』），"
-            "或你认为看一眼用户当前状态有助于回答（如情绪、是否在场、穿着、环境）。\n"
+            "或你认为看一眼用户当前状态有助于回答（如情绪、是否在场、穿着、环境）。"
+            "凡是涉及用户自身外貌/身份/当下状态的问题——性别、年龄、长相、发型打扮、佩戴物等——"
+            "都应调用本工具获取实时画面来作答。\n"
+            "注意：画面按需抓取即弃、不落盘；既然画面拿得到，就以实时画面为准作答，"
+            "不要用之前对话里已经叙述过的视觉细节来『替你在看』——每轮该看就看。\n"
             "若用户想让你重点看某一方面（如『看看我表情怎样』『看我手里拿着什么』『我房间乱不乱』），"
-            "把该关注点填进 instructions 参数，让视觉模型照它专门分析。\n"
-            "注意：画面按需抓取即弃，不进对话历史；若用户未开启摄像头或未授权，会如实返回『看不到』，"
-            "不要强求或反复调用。"
+            "把该关注点填进 instructions 参数，让视觉模型照它专门分析；"
+            "分辨类问题尤其适用（如性别、年龄，填『用户的性别/年龄，仅描述可观察的特征，不要臆测』）。\n"
+            "若用户未开启摄像头或未授权，会如实返回『看不到』，不要强求或反复调用。"
         ),
         "parameters": {
             "type": "object",
@@ -476,7 +480,7 @@ async def run_tool_loop(agent_messages: list, tools: list[dict], cfg, ctx: ToolC
     for idx in range(cfg.tool_max_rounds):
         async with round_span(idx) as rd:
             try:
-                resp = await async_call_llm_with_tools(msgs, tools)
+                resp = await async_call_llm_with_tools(msgs, tools, extra={"kind": "tool_reply"})
             except Exception as e:  # noqa: BLE001 - LLM 调用失败：让上层走降级话术
                 logger.exception("run_tool_loop LLM call failed: %s", e)
                 return None
