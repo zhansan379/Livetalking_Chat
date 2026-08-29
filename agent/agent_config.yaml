@@ -20,7 +20,7 @@ memory:
   longterm:
     enabled: true                    # 主开关；false 时召回返回空、提取跳过（零开销）
     dir: null                        # 记忆目录；null→data/memory，或 AGENT_MEMORY_DIR env
-    store_types: [user, feedback, project, reference]   # 允许落盘的记忆类型
+    store_types: [user, feedback, project, reference, state]   # 允许落盘的记忆类型
     recall_mode: auto                # auto→轻量即时注入；model→s09 模型选择（低延迟敏感部署用）
     recall_top_k: 3                  # 召回注入的最大记忆条数
     recall_char_limit: 800           # 注入正文总字符上限（有界）

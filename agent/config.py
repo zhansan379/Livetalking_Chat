@@ -22,7 +22,7 @@ _DEFAULT = {
         "longterm": {
             "enabled": True,
             "dir": None,
-            "store_types": ["user", "feedback", "project", "reference"],
+            "store_types": ["user", "feedback", "project", "reference", "state"],
             "recall_mode": "auto",
             "recall_top_k": 3,
             "recall_char_limit": 800,

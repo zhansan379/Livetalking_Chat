@@ -32,8 +32,9 @@ import yaml
 from utils.logger import logger
 from agent.config import get_agent_config
 
-# 允许落盘的记忆类型（user / feedback / project / reference）
-MEMORY_TYPES = ("user", "feedback", "project", "reference")
+# 允许落盘的记忆类型（user / feedback / project / reference / state）
+# state = 用户持续的「情绪/心理状态」快照，采用「最新覆盖」语义（见下面提取路径）
+MEMORY_TYPES = ("user", "feedback", "project", "reference", "state")
 
 # 命中即拒的临时性短语（多语言，沿用 s09 设计）：这类内容应留在当前会话，
 # 不应成为跨会话的持久规则/事实。
@@ -185,6 +186,13 @@ def delete_memory(slug: str, rebuild: bool = True) -> None:
         return
     if rebuild:
         rebuild_index()
+
+
+def _clear_state_memories() -> None:
+    """清掉库里全部 state 型记忆：state 是「最新情绪快照」，覆盖式更新，只存一份。"""
+    for rec in list_memories():
+        if rec.type == "state":
+            delete_memory(rec.slug, rebuild=False)
 
 
 def rebuild_index() -> None:
@@ -401,12 +409,20 @@ async def extract_longterm_memory(session_id: str, last_user_msg: str, reply: st
             sink_slugs = {m.slug for m in existing}
             seen_bodies = {_norm(m.body) for m in existing}
             written = 0
+            state_cleared = False
             for cand in candidates:
                 rec = _candidate_to_record(cand)
                 ok, reason = should_store_memory(cand, rec, sink_slugs, seen_bodies)
                 if not ok:
-                    logger.debug("longterm skip (%.16s…): %s", rec.name, reason)
+                    if rec.type == "state":
+                        logger.debug("longterm state skip (%s): %s", rec.name, reason)
                     continue
+                # state 是「最新情绪快照」：写入前清掉库里旧的情绪记忆，
+                # 无论新条目名是否与前一条相同，都以本轮为准覆盖。
+                if rec.type == "state" and not state_cleared:
+                    _clear_state_memories()
+                    sink_slugs = {m.slug for m in list_memories()}
+                    state_cleared = True
                 write_memory(rec, rebuild=False)
                 sink_slugs.add(rec.slug)
                 seen_bodies.add(_norm(rec.body))
@@ -426,13 +442,18 @@ async def _call_extract(user_msg: str, reply: str, cfg, context: str = "") -> li
     prompt = (
         "你是记忆提取器。从下面这段对话中，提取值得跨会话保存的持久知识，"
         "忽略一次性/临时性信息。只输出 JSON 数组，每项格式：\n"
-        '{"type": "user|feedback|project|reference", "name": "短名", '
+        '{"type": "user|feedback|project|reference|state", "name": "短名", '
         '"description": "一句话概括", "body": "具体内容", "scope": "persistent|current_task"}\n'
         'type 说明：user=用户画像/偏好；feedback=对助手仍适用的反馈；'
-        "project=稳定的项目/领域事实；reference=外部线索。\n"
+        "project=稳定的项目/领域事实；reference=外部线索；"
+        "state=用户当下持续的情绪/心理状态与情感需求。\n"
         "scope 为 current_task 的（仅本次任务有效）不要给出。\n"
         "特别注意：若对话中用户陈述了自己的身份/背景/境况（如\"我是大四应届生\"、"
-        "\"我学会计\"），即使没说\"记住\"也属于 user 型持久画像，可识别就要提取。"
+        "\"我学会计\"），即使没说\"记住\"也属于 user 型持久画像，可识别就要提取。\n"
+        "情绪状态方面：若用户流露出正在经历/持续的情绪或心理状态（如职业迷茫、"
+        "自我怀疑、压抑、焦虑、低落，或需要倾诉/鼓励/陪伴），且看似会持续一段时间"
+        "而非一时感慨，识别为 state 型快照，写清具体情绪与希望得到怎样的回应；"
+        "若只是一次性情绪或无明显持续状态，不要给 state。\n"
         "若无值得保存的，返回 []。"
     )
     if context and context.strip():
@@ -560,9 +581,10 @@ async def _call_consolidate(records: list[MemoryRecord]) -> list[MemoryRecord]:
     prompt = (
         "下面是长期记忆库。请去重、合并含义相近的条目、应用较新的更正、"
         "剔除不再有用或已失效的内容。只输出清理后的 JSON 数组，每项格式：\n"
-        '{"type": "user|feedback|project|reference", "name": "短名", '
+        '{"type": "user|feedback|project|reference|state", "name": "短名", '
         '"description": "一句话概括", "body": "具体内容", "scope": "persistent"}\n'
         "尽量精简合并，不要丢失仍有用的持久知识；不要新增对话里没有的内容。"
+        "state 型条目（当前情绪/状态快照）至多保留最新一条。"
     )
     raw = await async_call_llm(
         [
