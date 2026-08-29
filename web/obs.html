@@ -165,6 +165,8 @@
             white-space: nowrap;
         }
         .btn-outline-light svg { width: 15px; height: 15px; flex: none; }
+        /* 自动刷新切换后按钮从 btn-outline-light 变 btn-primary，图标尺寸不随之丢失 */
+        #autoToggle svg { width: 15px; height: 15px; flex: none; }
         .btn-outline-light:hover { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 
         /* ── 玻璃卡片 ── */
@@ -249,7 +251,7 @@
         @keyframes loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
         .refresh-spinner { font-size: .78rem; color: var(--muted); margin-left: auto; font-weight: 400; }
-        .refresh-spinner svg { vertical-align: -3px; margin-right: 4px; }
+        .refresh-spinner svg { width: 13px; height: 13px; vertical-align: -3px; margin-right: 4px; }
         .footer-hint { font-size: .78rem; color: var(--muted); text-align: center; margin-top: 26px; font-family: var(--mono); }
 
         /* ── Bootstrap 覆盖 ── */
