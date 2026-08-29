@@ -603,24 +603,27 @@
         while (utteranceQueue.length && callOn) {
             var audio = utteranceQueue.shift();
             setCallStatus('🎧 识别中...');
-            var text = await runTranscription(audio);
-            if (!text) {
+            var r = await runTranscription(audio);
+            if (!r.text) {
                 setCallStatus('未识别到有效内容');
                 continue;
             }
-            document.getElementById('msg').value = text;   // 输入框显示识别结果
+            document.getElementById('msg').value = r.text;   // 输入框显示识别结果
             setCallStatus('识别 → 请稍候...');
-            await sendChat(text);
+            await sendChat(r.text, r.trace_id);
         }
         draining = false;
         if (callOn) setCallStatus('🎙 正在倾听...');
     }
 
-    function sendChat(text) {
+    function sendChat(text, trace_id) {
+        var body = {
+            text: text, type: 'chat', interrupt: true, sessionid: getSessionId()
+        };
+        // echo ASR 服务端下发的回合 trace_id，让聊天 trace 复用同一 id（拼成一条 trace）
+        if (trace_id) body.trace_id = trace_id;
         return fetch('/human', {
-            body: JSON.stringify({
-                text: text, type: 'chat', interrupt: true, sessionid: getSessionId()
-            }),
+            body: JSON.stringify(body),
             headers: { 'Content-Type': 'application/json' }, method: 'POST'
         }).catch(function (er) { console.error('ASR chat error:', er); });
     }
@@ -648,10 +651,10 @@
         return new Promise(function (resolve) {
             var Uri = document.getElementById('wssip').value;
             var s = null;
-            try { s = new WebSocket(Uri); } catch (e) { resolve(''); return; }
+            try { s = new WebSocket(Uri); } catch (e) { resolve({ text: '', trace_id: null }); return; }
             var done = false;
             var timer = window.setTimeout(function () {
-                if (!done) { done = true; try { s.close(); } catch (e) {} resolve(''); }
+                if (!done) { done = true; try { s.close(); } catch (e) {} resolve({ text: '', trace_id: null }); }
             }, 30000);
 
             s.onopen = function () {
@@ -683,14 +686,14 @@
                 if (m && m.is_final && (m.mode === '2pass-offline' || m.mode === 'offline') && !done) {
                     done = true; clearTimeout(timer);
                     try { s.close(); } catch (e) {}
-                    resolve(m.text || '');
+                    resolve({ text: m.text || '', trace_id: m.trace_id || null });
                 }
             };
             s.onerror = function () {
-                if (!done) { done = true; clearTimeout(timer); try { s.close(); } catch (e) {} resolve(''); }
+                if (!done) { done = true; clearTimeout(timer); try { s.close(); } catch (e) {} resolve({ text: '', trace_id: null }); }
             };
             s.onclose = function () {
-                if (!done) { done = true; clearTimeout(timer); resolve(''); }
+                if (!done) { done = true; clearTimeout(timer); resolve({ text: '', trace_id: null }); }
             };
         });
     }

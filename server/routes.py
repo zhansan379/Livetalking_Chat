@@ -92,7 +92,8 @@ def _notify_reply_start(avatar_session):
     avatar_session.send_msg(json.dumps({"status": "reply_start"}))
 
 
-async def stream_llm_chat(avatar_session, session_id: str, message: str, datainfo: dict = {}):
+async def stream_llm_chat(avatar_session, session_id: str, message: str,
+                          datainfo: dict = {}, trace_id: str | None = None):
     """基于 infra_ai + agent 记忆的问答：优先走工具循环，无启用工具时退回流式问答。
 
     - 使用 agent.ChatAgent 加载/保存完整转录，并把「历史摘要 + 最近几轮」拼进上下文；
@@ -112,7 +113,14 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str, datainf
 
     cfg = get_agent_config()
     tools = build_tools(list_enabled_tools(cfg))
-    _begin_trace(session_id, (message or "")[:200], tool_mode=bool(tools))
+    # trace_id：复用来自 ASR 服务端下发的回合 id（浏览器 echo），从而把
+    # ASR→LLM/工具→TTS 拼成一条 trace；缺省则自旋一条（独立 trace，向后兼容）。
+    _tid = _begin_trace(session_id, (message or "")[:200], tool_mode=bool(tools),
+                        trace_id=trace_id)
+    # 把 trace 身份蹭进 datainfo：沿 put_msg_txt 传到 TTS 工作线程，
+    # 供基类 process_tts 用 emit_explicit 显式挂回本聊天 trace（线程拿不到 contextvars）。
+    if _tid:
+        datainfo["_obs"] = {"trace_id": _tid, "session_id": session_id, "parent_id": _tid}
     _notify_reply_start(avatar_session)  # 新一轮回答开始，前端清空字幕后逐句追加
 
     reply = None
@@ -201,8 +209,10 @@ async def human(request):
             avatar_session.put_msg_txt(params['text'], datainfo)
         elif params['type'] == 'chat':
             # 后台流式消费 infra_ai，避免阻塞 /human 响应（与旧 executor 语义一致）
+            # trace_id：浏览器 echo 的 ASR 回合 id → chat 段复用，拼成一条全链路 trace
             asyncio.create_task(
-                stream_llm_chat(avatar_session, sessionid, params['text'], datainfo)
+                stream_llm_chat(avatar_session, sessionid, params['text'], datainfo,
+                                trace_id=params.get('trace_id'))
             )
 
         return json_ok()

@@ -89,12 +89,45 @@ class Tracer:
     def ingest(self, event: dict) -> None:
         self.emit(event)
 
+    def emit_explicit(self, event: dict, *, trace_id: str | None,
+                      session_id: str | None,
+                      parent_id: str | None = None,
+                      kind: str = "chat") -> None:
+        """跨线程显式 ID 的 emit（供 base_tts 的 TTS 工作线程用）。
+
+        不读 contextvars——调用方显式给出 trace_id/session_id/parent_id，
+        因此可在 contextvars 传播不到的独立 thread（process_tts）里，把事件
+        挂回对应的聊天 trace 之下。信封 seq/ts/ms 照常生成（_next_seq 已加
+        锁）；不触碰 _LLM_CTR（llm_call 之外的事件计数）。
+        """
+        if not is_enabled():
+            return
+        ev: dict = {
+            "seq": self._next_seq(),
+            "ts": _now_iso(),
+            "ms": round(now_ms(), 3),
+            "trace_id": trace_id,
+            "session_id": session_id,
+            "parent_id": parent_id,
+        }
+        for k, v in event.items():
+            if k not in ("seq", "ts", "ms"):
+                ev[k] = v
+        ev.setdefault("kind", kind)
+        self._writer.append(ev)
+
     # ─── 请求级 trace ──────────────────────────────────────────────────────
     def begin_trace(self, session_id: str, msg_preview: str | None,
-                    tool_mode: bool | None = None, kind: str = "chat") -> str | None:
+                    tool_mode: bool | None = None, kind: str = "chat",
+                    trace_id: str | None = None) -> str | None:
+        """开始一条请求级 trace。
+
+        ``trace_id`` 可显式给入（例如 ASR 服务端下发的回合 id，供 chat 段复用，
+        从而把 ASR→LLM/工具→TTS 拼进同一条 trace）；缺省则自旋一条。
+        """
         if not is_enabled():
             return None
-        trace_id = uuid.uuid4().hex
+        trace_id = trace_id or uuid.uuid4().hex
         _TRACE_ID.set(trace_id)
         _SESSION_ID.set(session_id)
         _KIND.set(kind)

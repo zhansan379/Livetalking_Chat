@@ -160,6 +160,144 @@ class ObsTest(unittest.TestCase):
         lines = self._read_lines()
         self.assertEqual(len(lines), 3)  # 仅 ok trace 的 3 条（bad 写失败被静默跳过）
 
+    # ── 全链路：ASR / TTS ────────────────────────────────────────────────
+    def _write_asr_trace(self, session_id="s-asr", text="你好广州",
+                         inference_ms=200.0, success=True):
+        """独立 kind="asr" 的 trace（模拟 server/asr_server.py 的埋点）。"""
+        from obs import begin_trace, emit, end_trace
+        tid = begin_trace(session_id, "", tool_mode=None, kind="asr")
+        emit({"type": "asr_call", "span_id": tid, "parent_id": tid,
+              "audio_ms": 1500.0, "audio_len_s": 1.5,
+              "inference_ms": inference_ms, "elapsed_ms": inference_ms + 30.0,
+              "rtf": inference_ms / 1000.0 / 1.5,
+              "text": (text or "")[:40], "text_len": len(text or ""),
+              "empty": not success, "success": success,
+              "fail_reason": None if success else "inference_exception",
+              "err_type": None if success else "RuntimeError"})
+        end_trace(success=success, text_len=len(text or ""))
+        return tid
+
+    def test_asr_trace_isolated_and_aggregated(self):
+        from obs import query
+        self._write_chat_trace()            # 一条 chat
+        self._write_asr_trace()             # 一条独立 asr
+        self._write_asr_trace(text="失败", inference_ms=0.0, success=False)
+
+        s = query.summary(window=None)
+        # asr trace 不进聊天统计
+        self.assertEqual(s["traces"], 1)
+        self.assertEqual(s["success"], 1)
+        # 但进入 asr 聚合
+        self.assertEqual(s["asr"]["calls"], 2)
+        self.assertEqual(s["asr"]["success_rate"], 0.5)
+        self.assertEqual(s["asr"]["avg_ms"], 100.0)   # (200+0)/2
+        self.assertEqual(s["asr"]["total_audio_ms"], 3000.0)
+        self.assertGreater(s["asr"]["avg_rtf"], 0.0)
+        # requests 列表不含 asr trace
+        rows = query.requests(limit=10)
+        self.assertEqual(len(rows), 1)
+        self.assertNotIn("s-asr", [r.get("session_id") for r in rows])
+
+    def test_tts_call_emit_explicit_nests_and_counts(self):
+        import threading
+        from obs import query, emit_explicit
+        tid = self._write_chat_trace()
+
+        # 模拟 base_tts 的 TTS 工作线程：contextvars 拿不到，改用 emit_explicit 显式挂回父 trace
+        def _tts_worker():
+            emit_explicit({
+                "type": "tts_call", "provider": "edgetts",
+                "text": "今天天气不错", "text_len": 6, "attempts": 1,
+                "elapsed_ms": 120.0, "queue_ms": 8.0, "audio_ms": 2600.0,
+                "success": True, "fail_reason": None, "err_type": None,
+                "retried": False, "truncated": False,
+            }, trace_id=tid, session_id="s1", parent_id=tid, kind="chat")
+        th = threading.Thread(target=_tts_worker)
+        th.start()
+        th.join()  # 证明：即便从独立线程写，seq 仍单调、事件正常落盘
+
+        evs = query.request(tid)
+        tts = [e for e in evs if e["type"] == "tts_call"]
+        self.assertEqual(len(tts), 1)
+        self.assertEqual(tts[0]["parent_id"], tid)   # 挂回聊天 trace 下
+        self.assertEqual(tts[0]["trace_id"], tid)
+        self.assertEqual(tts[0]["provider"], "edgetts")
+
+        s = query.summary(window=None)
+        self.assertEqual(s["tts"]["calls"], 1)
+        self.assertEqual(s["tts"]["success_rate"], 1.0)
+        self.assertEqual(s["tts"]["avg_ms"], 120.0)
+        # tts_call 是 chat 子事件：不新增 trace_end，聊天 trace 数不变
+        self.assertEqual(s["traces"], 1)
+
+    def test_merged_single_trace_asr_llm_tts(self):
+        # 全链路合并成一条 trace：ASR(asr_call) → chat(trace_start/llm_call/tts_call/trace_end)。
+        # 模拟新流程：ASR 服务端生成回合 id → emit_explicit asr_call → 浏览器 echo →
+        # begin_trace(trace_id=同 id)。请求列表只出现一次、both 聚合正确。
+        from obs import query, emit_explicit, begin_trace, end_trace, emit
+        tid = "shared_turn_abc123"
+
+        emit_explicit({
+            "type": "asr_call",
+            "audio_ms": 1500.0, "audio_len_s": 1.5, "inference_ms": 200.0,
+            "elapsed_ms": 230.0, "rtf": 0.1333,
+            "text": "北京天气", "text_len": 4, "empty": False,
+            "success": True, "fail_reason": None, "err_type": None,
+        }, trace_id=tid, session_id="s-m", parent_id=tid, kind="asr")
+
+        # chat 段复用同一 id（浏览器 echo）
+        bt = begin_trace("s-m", "北京天气", tool_mode=False, trace_id=tid)
+        self.assertEqual(bt, tid)
+        emit({"type": "llm_call", "mode": "stream", "model": "qwen", "route": "bailian",
+              "has_tools": False, "attempts": 1, "elapsed_ms": 300.0,
+              "input_tokens": 5, "output_tokens": 20, "total_tokens": 25,
+              "success": True, "fail_reason": None, "err_type": None})
+        emit_explicit({
+            "type": "tts_call", "provider": "edgetts", "text": "今天天气不错",
+            "text_len": 6, "attempts": 1, "elapsed_ms": 120.0, "queue_ms": 8.0,
+            "audio_ms": 2600.0, "success": True, "fail_reason": None,
+            "err_type": None, "retried": False, "truncated": False,
+        }, trace_id=tid, session_id="s-m", parent_id=tid, kind="chat")
+        end_trace(success=True, text_len=4)
+
+        # 同一条 trace 内按 seq 见全部事件（asr_call 在最前）
+        evs = query.request(tid)
+        types = [e["type"] for e in evs]
+        self.assertEqual(types, ["asr_call", "trace_start", "llm_call", "tts_call", "trace_end"])
+        self.assertEqual(evs[0]["kind"], "asr")
+        self.assertEqual(evs[0]["parent_id"], tid)
+
+        # 请求列表只出现一次，正确计为一条 chat trace
+        rows = query.requests(limit=10)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["trace_id"], tid)
+
+        # 聊天统计与 asr/tts 聚合各自正确
+        s = query.summary(window=None)
+        self.assertEqual(s["traces"], 1)
+        self.assertEqual(s["success"], 1)
+        self.assertEqual(s["total_llm_calls"], 1)
+        self.assertEqual(s["asr"]["calls"], 1)
+        self.assertEqual(s["asr"]["success_rate"], 1.0)
+        self.assertEqual(s["tts"]["calls"], 1)
+
+    def test_pipeline_grouping(self):
+        from obs import query
+        self._write_chat_trace(session_id="p1")   # chat trace（含 TTS 朋友事件不在此）
+        self._write_asr_trace(session_id="p1")    # asr trace，同一会话
+
+        groups = query.pipeline("p1", limit=10)
+        kinds = sorted(g["kind"] for g in groups)
+        self.assertEqual(kinds, ["asr", "chat"])
+        for g in groups:
+            self.assertEqual(g["session_id"], "p1")
+            self.assertTrue(g["events"])           # 每组的明细事件
+            self.assertTrue(g["trace_id"])
+        # asr 组在 requests() 里不可见，但在 pipeline 里出现
+        rows = query.requests(limit=10)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(any(g["kind"] == "asr" for g in groups))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

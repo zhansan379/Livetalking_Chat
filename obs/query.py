@@ -63,8 +63,26 @@ def summary(window: int | None = None) -> dict:
     per_model: dict[str, dict] = {}
     tool_counts: dict[str, int] = {}
 
+    # ASR / TTS 独立聚合（不参与聊天统计）
+    asr_calls = asr_ok = 0
+    asr_ms = asr_audio = 0.0
+    asr_rtfs: list[float] = []
+    tts_calls = tts_ok = tts_retries = tts_trunc = 0
+    tts_ms = 0.0
+
     for ev in _read_events():
         if not _in_window(ev, window):
+            continue
+        if ev.get("kind") == "asr":
+            # ASR 独立 trace：只喂 asr 聚合，不污染聊天统计
+            if ev.get("type") == "asr_call":
+                asr_calls += 1
+                if ev.get("success"):
+                    asr_ok += 1
+                asr_ms += float(ev.get("inference_ms", 0) or 0)
+                asr_audio += float(ev.get("audio_ms", 0) or 0)
+                if float(ev.get("inference_ms", 0) or 0):
+                    asr_rtfs.append(float(ev.get("rtf", 0) or 0))
             continue
         if ev.get("kind") == "summary":
             continue  # 压缩摘要是维护成本，不参与用户请求统计
@@ -100,6 +118,16 @@ def summary(window: int | None = None) -> dict:
             total_tool_calls += 1
             tool = ev.get("tool", "?")
             tool_counts[tool] = tool_counts.get(tool, 0) + 1
+        elif t == "tts_call":
+            # TTS 合成段：kind="chat" 的子事件（非 trace_end），只喂 tts 聚合
+            tts_calls += 1
+            if ev.get("success"):
+                tts_ok += 1
+            tts_ms += float(ev.get("elapsed_ms", 0) or 0)
+            if ev.get("retried"):
+                tts_retries += 1
+            if ev.get("truncated"):
+                tts_trunc += 1
 
     per_model_list: list[dict] = []
     for m in per_model.values():
@@ -126,6 +154,20 @@ def summary(window: int | None = None) -> dict:
         "tool_call_counts": tool_counts,
         "total_tool_calls": total_tool_calls,
         "tool_rounds": tool_rounds,
+        "asr": {
+            "calls": asr_calls,
+            "success_rate": round(asr_ok / asr_calls, 4) if asr_calls else 0.0,
+            "avg_ms": round(asr_ms / asr_calls, 1) if asr_calls else 0.0,
+            "total_audio_ms": round(asr_audio, 1),
+            "avg_rtf": round(sum(asr_rtfs) / len(asr_rtfs), 4) if asr_rtfs else 0.0,
+        },
+        "tts": {
+            "calls": tts_calls,
+            "success_rate": round(tts_ok / tts_calls, 4) if tts_calls else 0.0,
+            "avg_ms": round(tts_ms / tts_calls, 1) if tts_calls else 0.0,
+            "retry_count": tts_retries,
+            "truncation_count": tts_trunc,
+        },
     }
 
 
@@ -136,7 +178,8 @@ def requests(limit: int | None = None) -> list[dict]:
     for ev in events:
         etype = ev.get("type")
         tid = ev.get("trace_id")
-        if not tid or ev.get("kind") == "summary":
+        # ASR/压缩 trace 都不进聊天请求列表（ASR 走 pipeline 单独看）
+        if not tid or ev.get("kind") in ("summary", "asr"):
             continue
         if etype == "trace_start":
             if tid not in by_trace:
@@ -169,3 +212,60 @@ def request(trace_id: str) -> list[dict]:
             out.append(ev)
     out.sort(key=lambda e: e.get("seq", 0))
     return out
+
+
+def pipeline(session_id: str, limit: int = 20) -> list[dict]:
+    """按 session_id 聚合该会话的全链路 trace 组（ASR / chat）。
+
+    面板据此把 ASR→LLM/工具→TTS 拼成同一会话下的时间线。每个 trace 组结构与
+    request() 一致（events 按 seq 升序），供前端复用同一时间线渲染。跳过
+    kind=="summary" 的压缩 trace。按结束时间倒序、cap limit。
+    """
+    events = _read_events()
+    seen: dict[str, dict] = {}  # trace_id -> {trace_end, ts, kind}
+    order: list[str] = []
+    for ev in events:
+        if ev.get("session_id") != session_id:
+            continue
+        if ev.get("kind") == "summary":
+            continue
+        tid = ev.get("trace_id")
+        if not tid:
+            continue
+        if tid not in seen:
+            seen[tid] = {"end": None}
+            order.append(tid)
+        if ev.get("type") == "trace_end":
+            seen[tid]["end"] = ev
+
+    groups: list[dict] = []
+    for tid in order:
+        g = seen[tid]
+        kind = None
+        evs = []
+        for ev in events:
+            if ev.get("trace_id") != tid:
+                continue
+            # 整条 trace 的 kind 取根事件（trace_start）为准：ASR→LLM/工具→TTS
+            # 合并成一条 trace 时，首事件常是 kind="asr" 的 asr_call，不能据此当 asr 类。
+            if ev.get("type") == "trace_start":
+                kind = ev.get("kind")
+            evs.append(ev)
+        if kind is None and evs:
+            kind = evs[0].get("kind")
+        end = g["end"]
+        first = evs[0] if evs else None
+        stamp = (end or first)
+        groups.append({
+            "trace_id": tid,
+            "kind": kind,
+            "session_id": session_id,
+            "ts": stamp.get("ts") if stamp else "",
+            "success": bool(end.get("success")) if end else None,
+            "events": evs,
+        })
+
+    def _sort_key(g: dict) -> str:
+        return g.get("ts") or ""
+    groups.sort(key=_sort_key, reverse=True)
+    return groups[:max(0, limit)]

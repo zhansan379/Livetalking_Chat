@@ -38,8 +38,10 @@ def install() -> None:
 
 # ─── 请求级 trace ────────────────────────────────────────────────────────
 def begin_trace(session_id: str, msg_preview: str | None,
-                tool_mode: bool | None = None, kind: str = "chat"):
-    return _get_tracer().begin_trace(session_id, msg_preview, tool_mode, kind)
+                tool_mode: bool | None = None, kind: str = "chat",
+                trace_id: str | None = None):
+    return _get_tracer().begin_trace(session_id, msg_preview, tool_mode, kind,
+                                     trace_id=trace_id)
 
 
 def end_trace(success: bool, fail_reason: str | None = None, text_len: int = 0,
@@ -51,6 +53,13 @@ def end_trace(success: bool, fail_reason: str | None = None, text_len: int = 0,
 
 def emit(event: dict) -> None:
     _get_tracer().emit(event)
+
+
+def emit_explicit(event: dict, *, trace_id: str | None, session_id: str | None,
+                  parent_id: str | None = None, kind: str = "chat") -> None:
+    """跨线程显式 ID 的 emit（base_tts 的 TTS 工作线程用它挂回聊天 trace）。"""
+    _get_tracer().emit_explicit(event, trace_id=trace_id, session_id=session_id,
+                                parent_id=parent_id, kind=kind)
 
 
 def round_span(round_idx: int):
@@ -68,5 +77,5 @@ def setup_routes(app) -> None:
 
 __all__ = [
     "install", "is_enabled", "begin_trace", "end_trace", "emit",
-    "round_span", "new_trace", "setup_routes",
+    "emit_explicit", "round_span", "new_trace", "setup_routes",
 ]

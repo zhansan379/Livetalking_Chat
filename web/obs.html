@@ -83,6 +83,12 @@
 
         /* ── 展开 trace 时间线 ── */
         .trace-detail { background: #f7f9fd; border-radius: 10px; padding: 12px 14px; }
+        .stage-label {
+            font-size: 0.74rem; font-weight: 700; color: var(--accent-secondary);
+            text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 2px 8px;
+            border-bottom: 1px solid rgba(0,0,0,0.08); margin-bottom: 8px;
+        }
+        .trace-detail + .stage-label { margin-top: 14px; }
         .span-line { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 0.84rem; border-bottom: 1px dashed rgba(0,0,0,0.06); }
         .span-line:last-child { border-bottom: none; }
         .span-icon { width: 26px; text-align: center; font-size: 1rem; flex-shrink: 0; }
@@ -129,6 +135,23 @@
         <div class="col-6 col-md-3"><div class="glass-card stat-card"><div class="skeleton"></div></div></div>
     </div>
 
+    <!-- ═══════ 全链路阶段指标（ASR / TTS） ═══════ -->
+    <div class="d-flex align-items-center mt-4 mb-2">
+        <i class="bi bi-diagram-3 me-2 text-primary"></i>
+        <span class="fw-bold">全链路阶段</span>
+        <span class="text-muted small ms-2">ASR → LLM / 工具 → TTS</span>
+    </div>
+    <div class="row g-3" id="stageCards">
+        <div class="col-6 col-md-3"><div class="glass-card stat-card"><div class="skeleton"></div></div></div>
+        <div class="col-6 col-md-3"><div class="glass-card stat-card"><div class="skeleton"></div></div></div>
+        <div class="col-6 col-md-3"><div class="glass-card stat-card"><div class="skeleton"></div></div></div>
+        <div class="col-6 col-md-3"><div class="glass-card stat-card"><div class="skeleton"></div></div></div>
+        <div class="col-6 col-md-3"><div class="glass-card stat-card"><div class="skeleton"></div></div></div>
+        <div class="col-6 col-md-3"><div class="glass-card stat-card"><div class="skeleton"></div></div></div>
+        <div class="col-6 col-md-3"><div class="glass-card stat-card"><div class="skeleton"></div></div></div>
+        <div class="col-6 col-md-3"><div class="glass-card stat-card"><div class="skeleton"></div></div></div>
+    </div>
+
     <!-- ═══════ 图表 ═══════ -->
     <div class="row g-3 mt-1">
         <div class="col-lg-4">
@@ -147,6 +170,22 @@
             <div class="glass-card h-100">
                 <div class="card-header"><i class="bi bi-pie-chart-fill"></i> 请求成功 / 失败</div>
                 <div class="card-body"><div id="chartDonut" class="chart-box"><div class="skeleton"></div></div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════ 全链路图表（各阶段耗时 / TTS 成功率） ═══════ -->
+    <div class="row g-3 mt-1">
+        <div class="col-lg-6">
+            <div class="glass-card h-100">
+                <div class="card-header"><i class="bi bi-bar-chart-line"></i> 各阶段平均耗时 (ms)</div>
+                <div class="card-body"><div id="chartStage" class="chart-box"><div class="skeleton"></div></div></div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="glass-card h-100">
+                <div class="card-header"><i class="bi bi-graph-up-arrow"></i> TTS 合成成功率</div>
+                <div class="card-body"><div id="chartTTS" class="chart-box"><div class="skeleton"></div></div></div>
             </div>
         </div>
     </div>
@@ -170,7 +209,7 @@
         </div>
     </div>
 
-    <div class="footer-hint"><i class="bi bi-info-circle me-1"></i>接口：/api/obs/summary、/api/obs/requests、/api/obs/request/{trace_id}</div>
+    <div class="footer-hint"><i class="bi bi-info-circle me-1"></i>接口：/api/obs/summary、/api/obs/requests、/api/obs/request/{trace_id}、/api/obs/pipeline</div>
 </div>
 
 <script src="lib/jquery-2.1.1.min.js"></script>
@@ -180,7 +219,7 @@
 /* ==========================================================
  *  观测面板：指标卡片 + 3 图 + 最近请求表(可展开 trace)
  * ========================================================== */
-let trendChart, modelChart, donutChart;
+let trendChart, modelChart, donutChart, stageChart, ttsChart;
 let POLL = 5000;
 let pollTimer = null;   // 自动刷新定时器
 let autoEnabled = false; // 自动刷新开关（默认关，需用户开启）
@@ -225,12 +264,42 @@ function renderStats(s) {
     $('#statCards').html(html);
 }
 
+/* ---------- 全链路阶段指标卡（ASR / TTS） ---------- */
+function renderStageStats(s) {
+    const asr = s.asr || {}, tts = s.tts || {};
+    const asrRate = (asr.success_rate * 100).toFixed(1) + '%';
+    const cells = [
+        { label: 'ASR 调用', value: String(asr.calls || 0), sub: '语音识别次数', color: '#0ea5e9' },
+        { label: 'ASR 成功率', value: asrRate, sub: (asr.calls || 0) + ' 次识别', color: C_OK },
+        { label: 'ASR 平均推理', value: fmtMs(asr.avg_ms), sub: '总音频 ' + fmtMs(asr.total_audio_ms), color: '#0ea5e9' },
+        { label: 'ASR 平均 RTF', value: (asr.avg_rtf || 0).toFixed(2) + 'x', sub: '实时率（<1 更快）', color: '#0ea5e9' },
+        { label: 'TTS 句子', value: String(tts.calls || 0), sub: '合成句数', color: '#f97316' },
+        { label: 'TTS 成功率', value: ((tts.success_rate || 0) * 100).toFixed(1) + '%', sub: '平均 ' + fmtMs(tts.avg_ms), color: C_OK },
+        { label: 'TTS 重试', value: String(tts.retry_count || 0), sub: '含失败重试', color: '#f97316' },
+        { label: 'TTS 截断', value: String(tts.truncation_count || 0), sub: '断流/过短', color: '#f97316' },
+    ];
+    const html = cells.map(c => `
+        <div class="col-6 col-md-3">
+            <div class="glass-card stat-card">
+                <div class="stat-value" style="color:${c.color}">${c.value}</div>
+                <div class="stat-label">${c.label}</div>
+                ${c.sub ? `<div class="stat-sub">${c.sub}</div>` : ''}
+            </div>
+        </div>`).join('');
+    $('#stageCards').html(html);
+}
+
 /* ---------- 图表 ---------- */
 function ensureCharts() {
     if (!trendChart) trendChart = echarts.init(document.getElementById('chartTrend'));
     if (!modelChart) modelChart = echarts.init(document.getElementById('chartModel'));
     if (!donutChart) donutChart = echarts.init(document.getElementById('chartDonut'));
-    window.addEventListener('resize', () => { trendChart.resize(); modelChart.resize(); donutChart.resize(); });
+    if (!stageChart) stageChart = echarts.init(document.getElementById('chartStage'));
+    if (!ttsChart) ttsChart = echarts.init(document.getElementById('chartTTS'));
+    window.addEventListener('resize', () => {
+        trendChart.resize(); modelChart.resize(); donutChart.resize();
+        stageChart.resize(); ttsChart.resize();
+    });
 }
 
 function renderCharts(s, requests) {
@@ -278,6 +347,44 @@ function renderCharts(s, requests) {
             ]
         }]
     }, true);
+    // 各阶段平均耗时（ASR → LLM → TTS）
+    const llmCalls = s.total_llm_calls || 0;
+    let llmAvg = 0;
+    if (s.per_model && llmCalls) {
+        llmAvg = s.per_model.reduce((a, m) => a + (m.avg_elapsed_ms || 0) * (m.calls || 0), 0) / llmCalls;
+    }
+    const stageData = [
+        { name: 'ASR', value: (s.asr && s.asr.avg_ms) || 0, color: '#0ea5e9' },
+        { name: 'LLM', value: llmAvg, color: C_ACC },
+        { name: 'TTS', value: (s.tts && s.tts.avg_ms) || 0, color: '#f97316' },
+    ];
+    stageChart.setOption({
+        grid: { left: 50, right: 16, top: 24, bottom: 24 },
+        tooltip: { trigger: 'axis', formatter: p => p[0].name + ' 平均: ' + fmtMs(p[0].value) },
+        xAxis: { type: 'category', data: stageData.map(d => d.name), axisLabel: { fontSize: 12 } },
+        yAxis: { type: 'value', axisLabel: { fontSize: 10, formatter: v => v + 'ms' } },
+        series: [{
+            name: '平均耗时', type: 'bar', barMaxWidth: 64,
+            data: stageData.map(d => ({ value: Math.round(d.value), itemStyle: { color: d.color } })),
+            label: { show: true, position: 'top', fontSize: 10, formatter: p => p.value + 'ms' }
+        }]
+    }, true);
+    // TTS 合成成功率环图
+    const ttsTotal = (s.tts && s.tts.calls) || 0;
+    const ttsOk = Math.round(((s.tts && s.tts.success_rate) || 0) * ttsTotal);
+    if (ttsTotal > 0) {
+        ttsChart.setOption({
+            tooltip: { trigger: 'item', formatter: p => p.name + ': ' + p.value + ' (' + p.percent + '%)' },
+            series: [{
+                type: 'pie', radius: ['46%', '68%'], center: ['50%', '44%'], avoidLabelOverlap: false,
+                label: { show: true, formatter: '{b}\n{d}%', fontSize: 11 },
+                data: [
+                    { value: ttsOk, name: '成功', itemStyle: { color: C_OK } },
+                    { value: ttsTotal - ttsOk, name: '失败', itemStyle: { color: C_FAIL } }
+                ]
+            }]
+        }, true);
+    } else { ttsChart.clear(); }
 }
 
 /* ---------- 最近请求表 ---------- */
@@ -322,15 +429,18 @@ $(document).on('click', '.request-row', function () {
 });
 
 function loadTrace(tid) {
+    // 全链路（ASR→LLM/工具→TTS）已拼在同一条 trace：直接渲染 request 全部事件，
+    // 时间线按 seq 升序，asr_call 自然排在最前。
     fetch('/api/obs/request/' + tid).then(r => r.json()).then(j => {
         const evs = (j.data && j.data.events) || [];
-        $('.trace-row[data-tid="' + tid + '"] .trace-detail').html(renderTimeline(evs));
+        const html = '<div class="stage-label">💬 全链路</div>' + renderTimeline(evs);
+        $('.trace-row[data-tid="' + tid + '"] .trace-detail').html(html || '<div class="empty-state">无事件</div>');
     }).catch(() => {});
 }
 
 function renderTimeline(evs) {
     if (!evs.length) return '<div class="empty-state">无事件</div>';
-    const icon = { trace_start:'🚀', llm_call:'🤖', tool_round:'🔁', tool_call:'🛠', trace_end:'✅' };
+    const icon = { trace_start:'🚀', llm_call:'🤖', tool_round:'🔁', tool_call:'🛠', trace_end:'✅', asr_call:'🎙', tts_call:'🗣' };
     let lastRound = -1;
     const lines = evs.map(ev => {
         let iconC = icon[ev.type] || '·';
@@ -349,6 +459,21 @@ function renderTimeline(evs) {
             meta = esc(ev.args ? ev.args.slice(0,60) : '') + (ev.success ? '' : ' · ✗ ' + esc(ev.error||'失败'));
             if (ev.result_snippet) meta += '  → ' + esc(ev.result_snippet.slice(0,60));
             iconC = ev.success ? '🛠' : '⚠️';
+        }
+        else if (ev.type === 'asr_call') {
+            name = 'ASR 转录';
+            meta = '推理 ' + fmtMs(ev.inference_ms) + ' · RTF ' + (ev.rtf || 0).toFixed(2) +
+                   (ev.text ? '  → ' + esc(ev.text) : '') +
+                   (ev.success ? '' : ' · ✗ ' + esc(ev.fail_reason||'失败'));
+            iconC = ev.success ? '🎙' : '🤷';
+        }
+        else if (ev.type === 'tts_call') {
+            name = 'TTS 合成';
+            meta = (ev.provider ? esc(ev.provider) + ' · ' : '') + '音频 ' + fmtMs(ev.audio_ms) +
+                   ' · 尝试 ' + (ev.attempts || 1) +
+                   (ev.retried ? ' · 重试' : '') + (ev.truncated ? ' · 截断' : '') +
+                   (ev.success ? '' : ' · ✗ ' + esc(ev.fail_reason||'失败'));
+            iconC = ev.success ? '🗣' : '🔇';
         }
         return `<div class="span-line"><span class="span-icon">${iconC}</span>
             <span class="span-name">${esc(name)}</span>
@@ -386,6 +511,7 @@ async function refreshAll() {
         const s = sr.data || {}, re = (rr.data && rr.data.requests) || [];
         lastRequests = re;
         renderStats(s);
+        renderStageStats(s);
         renderCharts(s, re);
         renderRequests(re);
         // 保持当前展开的 trace 在新一轮刷新后仍展开，并重新拉取最新明细

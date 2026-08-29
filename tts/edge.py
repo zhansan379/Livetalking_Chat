@@ -26,7 +26,17 @@ class EdgeTTS(BaseTTS):
         def _warn(why, attempt):
             logger.warning(f"edgetts {why} (attempt {attempt}/{max_try+1}): {text[:20]!r}")
 
+        # 供基类 process_tts 统一埋点：把咽下的失败(barge-in/empty/truncated/max_retries)
+        # 与重试计数写进 last_tts；基类按它生成 tts_call 事件。
+        def _fail(fail_reason, attempts, truncated=False, audio_ms=0):
+            self.last_tts = {"success": False, "fail_reason": fail_reason,
+                             "attempts": attempts, "truncated": truncated,
+                             "retried": attempts > 1, "audio_ms": audio_ms}
+
         stream = None
+        retried = False      # 本句是否发生过任意类型的重试
+        truncated = False    # 本句是否发生过「断流截断」重试
+        audio_ms = 0.0       # 若从未到达解码赋值（如一直空音频），else 分支兜底
         for attempt in range(1, max_try + 2):
             self._reset_stream()
             t = time.time()
@@ -42,16 +52,20 @@ class EdgeTTS(BaseTTS):
                 _warn(f"合成异常: {type(e).__name__}: {e}", attempt)
                 # 中途被打断(barge-in)则不再徒劳重试，直接放弃本句
                 if self.state != State.RUNNING:
+                    _fail("barge_in", attempt)
                     self._reset_stream()
                     return
+                retried = True
                 continue
             logger.info(f'-------edge tts time:{time.time()-t:.4f}s')
 
             if self.input_stream.getbuffer().nbytes <= 0:  #edgetts err
                 _warn("返回空音频", attempt)
                 if self.state != State.RUNNING:
+                    _fail("barge_in", attempt)
                     self._reset_stream()
                     return
+                retried = True
                 continue
 
             self.input_stream.seek(0)
@@ -60,10 +74,12 @@ class EdgeTTS(BaseTTS):
             except Exception:
                 logger.exception('edgetts 解码音频失败')
                 if self.state != State.RUNNING:
+                    _fail("barge_in", attempt)
                     self._reset_stream()
                     return
                 self._reset_stream()
                 stream = None
+                retried = True
                 continue
             audio_ms = stream.shape[0] / self.sample_rate * 1000
             logger.info(f'[INFO] tts audio 时长 {audio_ms:.0f}ms')
@@ -71,12 +87,22 @@ class EdgeTTS(BaseTTS):
                 break
             _warn(f"音频过短({audio_ms:.0f}ms < {min_audio_ms}ms，疑似断流被截断)", attempt)
             # 断流导致的截断不属于 barge-in，允许重试
+            truncated = True
+            retried = True
             self._reset_stream()
             stream = None
         else:
             logger.error(f'edgetts 合成失败超过重试上限，丢弃该句: {text[:20]!r}')
+            _fail("empty_audio" if retried and audio_ms == 0 else
+                  ("truncated" if truncated else "max_retries"),
+                  max_try + 1, truncated=truncated)
             self._reset_stream()
             return
+
+        # 合成成功（可能经历过重试）
+        self.last_tts = {"success": True, "audio_ms": audio_ms,
+                         "attempts": attempt, "retried": retried,
+                         "truncated": False}
 
         # ---- 播放音频 ----
         streamlen = stream.shape[0]

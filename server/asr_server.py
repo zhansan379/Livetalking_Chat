@@ -17,10 +17,42 @@ import time
 import io
 import asyncio
 import threading
+import uuid
 import numpy as np
 from aiohttp import web
 
 from utils.logger import logger
+
+# 观测（全链路 ASR 段）——可选依赖：obs 缺失/关闭时全部降级为空操作
+# 用显式 ID 的 emit_explicit：ASR 服务端生成回合 trace_id，下发给浏览器，
+# 浏览器在 /human 里 echo 回来，chat 段复用同一 trace_id → 拼成一条 trace。
+try:
+    from obs import emit_explicit as _obs_emit_explicit
+except Exception:  # noqa: BLE001
+    _obs_emit_explicit = None
+
+
+def _emit_asr(trace_id, session_id, audio_seconds, inference_ms, elapsed_ms,
+              rtf, text, success, fail_reason, err_type=None) -> None:
+    """把一次转录作为 asr_call（kind="asr"）挂到指定 trace 之下。
+
+    单条 trace（ASR→LLM→TTS）里，asr_call 的 span_id == trace_id（ASR 是整条
+    链路的第一环）；不新增独立 trace_start/end。obs 缺失/关闭时静默跳过。
+    """
+    if not (_obs_emit_explicit and trace_id):
+        return
+    _obs_emit_explicit({
+        "type": "asr_call", "span_id": trace_id, "parent_id": trace_id,
+        "audio_ms": round(audio_seconds * 1000, 1),
+        "audio_len_s": round(audio_seconds, 3),
+        "inference_ms": round(inference_ms, 1),
+        "elapsed_ms": round(elapsed_ms, 1),
+        "rtf": round(rtf, 4),
+        "text": (text or "")[:40], "text_len": len(text or ""),
+        "empty": not bool((text or "").strip()),
+        "success": bool(success), "fail_reason": fail_reason,
+        "err_type": err_type,
+    }, trace_id=trace_id, session_id=session_id, parent_id=trace_id, kind="asr")
 
 
 # ─── Lazy Model Loader ────────────────────────────────────────────────────
@@ -153,6 +185,7 @@ async def asr_websocket_handler(request):
     config: dict = {}
     session_start = time.perf_counter()
     chunks_received = 0
+    utterance_tid: str | None = None  # 本次语音的回合 trace_id（服务端生成，随响应下发）
 
     try:
         async for msg in ws:
@@ -169,6 +202,9 @@ async def asr_websocket_handler(request):
                     audio_buffer = bytearray()
                     chunks_received = 0
                     session_start = time.perf_counter()
+                    # 本次语音的回合 trace_id：随转录响应下发给浏览器，浏览器再
+                    # 在 /human 里 echo 回来，chat 段复用 → ASR/LLM/TTS 一条 trace。
+                    utterance_tid = uuid.uuid4().hex
                     logger.info(
                         f"[ASR] 🎙️  Recording started | "
                         f"mode={config.get('mode', 'offline')} | "
@@ -190,13 +226,19 @@ async def asr_websocket_handler(request):
                         f"session wall time {session_elapsed:.1f}s"
                     )
 
+                    session_id = str(config.get("wav_name") or client_ip)
+
                     if buf_bytes < 640:  # < 20 ms of audio — skip
                         logger.warning("[ASR] Audio too short (< 20ms), returning empty")
+                        _emit_asr(utterance_tid, session_id, audio_seconds,
+                                  0.0, 0.0, 0.0, "", success=False,
+                                  fail_reason="audio_too_short")
                         await ws.send_str(json.dumps({
                             "text": "",
                             "mode": config.get("mode", "offline"),
                             "is_final": True,
                             "timestamp": None,
+                            "trace_id": utterance_tid,
                         }))
                         continue
 
@@ -213,6 +255,8 @@ async def asr_websocket_handler(request):
 
                     # Offload blocking inference to a thread
                     loop = asyncio.get_event_loop()
+                    _t0 = time.perf_counter()
+                    error = None
                     try:
                         text, inference_ms, audio_dur = await loop.run_in_executor(
                             None,
@@ -223,7 +267,19 @@ async def asr_websocket_handler(request):
                         )
                     except Exception as e:
                         logger.exception(f"[ASR] ❌ Inference failed: {e}")
-                        text = ""
+                        error = e
+                        text, inference_ms, audio_dur = "", 0.0, audio_seconds
+
+                    elapsed_ms = (time.perf_counter() - _t0) * 1000
+                    infer_ok = error is None
+                    rtf = (inference_ms / 1000.0) / max(audio_dur, 0.001) if infer_ok else 0.0
+                    success = infer_ok and bool(text.strip())
+                    # 显式 ID 的 emit_explicit（不依赖 contextvars），可直接在 handler 协程调用。
+                    # 无独立 asr trace——整条链路共用一个 utterance_tid。
+                    _emit_asr(utterance_tid, session_id, audio_seconds, inference_ms,
+                              elapsed_ms, rtf, text or "", success=success,
+                              fail_reason="inference_exception" if error else None,
+                              err_type=error.__class__.__name__ if error else None)
 
                     # Map the client mode to the response mode the frontend expects
                     mode = config.get("mode", "offline")
@@ -237,6 +293,7 @@ async def asr_websocket_handler(request):
                         "mode": response_mode,
                         "is_final": True,
                         "timestamp": None,
+                        "trace_id": utterance_tid,
                     }))
                     logger.info(f"[ASR] 📤 Result sent to client (mode={response_mode})")
 

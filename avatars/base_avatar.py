@@ -225,8 +225,11 @@ class BaseAvatar:
 
     def notify(self, eventpoint:dict):
         if eventpoint and eventpoint.get('status'):
-            logger.info("notify:%s", eventpoint)
-            self.send_msg(json.dumps(eventpoint))
+            # 剔除内部观测字段（_obs 蹭在 datainfo/textevent 里传往 TTS 线程），
+            # 不把它写到发往浏览器的 SSE 事件。
+            ep = {k: v for k, v in eventpoint.items() if not str(k).startswith("_")}
+            logger.info("notify:%s", ep)
+            self.send_msg(json.dumps(ep))
 
     def start_recording(self):
         if self.recording:

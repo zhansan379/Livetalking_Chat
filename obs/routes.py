@@ -52,7 +52,21 @@ async def obs_request(request):
         return _json_error(str(e))
 
 
+async def obs_pipeline(request):
+    """按 session_id 返回该会话的全链路 trace 组（ASR → LLM/工具 → TTS）。"""
+    try:
+        sid = request.query.get("session_id", "")
+        if not sid:
+            return _json_error("session_id required")
+        raw = request.query.get("limit")
+        limit = int(raw) if raw else 20
+        return _json_ok({"session_id": sid, "traces": query.pipeline(sid, limit=limit)})
+    except Exception as e:  # noqa: BLE001
+        return _json_error(str(e))
+
+
 def register(app):
     app.router.add_get("/api/obs/summary", obs_summary)
     app.router.add_get("/api/obs/requests", obs_requests)
     app.router.add_get("/api/obs/request/{trace_id}", obs_request)
+    app.router.add_get("/api/obs/pipeline", obs_pipeline)
