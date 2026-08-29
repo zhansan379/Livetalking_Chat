@@ -89,6 +89,8 @@
             z-index: 20;
             display: flex;
             align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;   /* 一行放不下时换行而非把按钮挤出/压扁 */
             gap: 6px;
             padding: 8px;
             border-radius: 18px;
@@ -150,33 +152,9 @@
         #btn-camera.active .cam-on { display: block; }
         #btn-camera.active .cam-off { display: none; }
 
-        #camera-indicator {
-            position: fixed;
-            left: 50%;
-            bottom: 6px;
-            transform: translateX(-50%);
-            z-index: 16;
-            display: flex;
-            align-items: center;
-            gap: 7px;
-            padding: 5px 12px;
-            border-radius: 999px;
-            font-size: 12px;
-            color: var(--text-faint);
-            background: rgba(0,0,0,.45);
-            pointer-events: none;
-            transition: opacity .3s;
-        }
-        #camera-indicator .dot {
-            width: 8px; height: 8px; border-radius: 50%;
-            background: #555;
-        }
-        #camera-indicator.cam-on .dot { background: #ff4d4f; box-shadow: 0 0 6px #ff4d4f; animation: cam-pulse 1.4s infinite; }
-        @keyframes cam-pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
-
-        #msg {
+                #msg {
             flex: 1;
-            min-width: 180px;
+            min-width: 70px;   /* 让出空间给工具栏新增按钮，避免一行塞不下把右侧按钮挤出 */
             padding: 11px 16px;
             font-size: 14px;
             color: #fff;
@@ -445,11 +423,12 @@
         <span id="call-label">开启通话</span>
     </button>
     <input id="msg" type="text" placeholder="语音识别结果 / 输入文字直接对话，回车发送" autocomplete="off"/>
-    <button id="btn-upload" class="bar-btn" onclick="triggerUpload()" aria-label="上传文件" title="上传文件（如简历/岗位要求）">
+    <button id="btn-upload" class="bar-btn" onclick="triggerUpload()" aria-label="上传文件" title="上传文件">
         <svg class="ic" aria-hidden="true" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         <span>上传文件</span>
     </button>
     <input id="file-input" type="file" hidden/>
+    <button id="btn-fullscreen" class="bar-btn" onclick="toggleFullscreen()" aria-label="全屏">
         <svg class="ic" aria-hidden="true" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
         <span>全屏</span>
     </button>
@@ -467,7 +446,6 @@
         <span id="camera-label">摄像头</span>
     </button>
 </div>
-<div id="camera-indicator"><span class="dot"></span><span id="camera-indicator-text">摄像头已关闭</span></div>
 
 <!-- 设置弹窗 (藏起原 input text / Use STUN server / asr服务器地址) -->
 <div id="modal-mask" onclick="if(event.target===this)closeSettings()">
@@ -763,12 +741,6 @@
         var l = document.getElementById('camera-label');
         if (l) l.textContent = camOn ? '摄像头 开' : '摄像头';
         if (b) b.classList.toggle('active', camOn);
-        var ind = document.getElementById('camera-indicator');
-        if (ind) {
-            ind.classList.toggle('cam-on', camOn);
-            var t = document.getElementById('camera-indicator-text');
-            if (t) t.textContent = camOn ? '摄像头已开启 · 对话中有可能被查看' : '摄像头已关闭';
-        }
     }
 
     function toggleCamera() {
