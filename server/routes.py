@@ -104,6 +104,7 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str, datainf
     from agent import ChatAgent
     from agent.config import get_agent_config
     from agent.tool_loop import build_tools, list_enabled_tools, run_tool_loop
+    from obs import begin_trace as _begin_trace, end_trace as _end_trace
 
     agent = ChatAgent(session_id)
     messages = agent.build_messages(message)  # 同步组装上下文，不触发压缩
@@ -111,59 +112,69 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str, datainf
 
     cfg = get_agent_config()
     tools = build_tools(list_enabled_tools(cfg))
+    _begin_trace(session_id, (message or "")[:200], tool_mode=bool(tools))
     _notify_reply_start(avatar_session)  # 新一轮回答开始，前端清空字幕后逐句追加
 
     reply = None
-    if tools:
-        final = await run_tool_loop(messages, tools, cfg)
-        final = _sanitize(final) if final else final
-        if final:
-            reply = final
-            _feed_talk(avatar_session, final, datainfo)
-        else:
-            logger.warning("tool loop returned None/empty after sanitize, use fallback phrase")
-            _feed_talk(avatar_session, _TOOL_FAIL_FALLBACK, datainfo)
-    else:
-        # 无启用工具 → 保留原有流式逐字消费。缓冲区跨 token 累积，
-        # 按标点切句、超过 10 字即推送，末尾剩余部分补推。
-        # 推送前与收尾时统一过 _sanitize，保证朗读内容不含表情/markdown 字符。
-        from infra_ai import async_stream_call_llm
-        full_reply = []
-        buf = ""
-        try:
-            async for token in async_stream_call_llm(messages):
-                if not token:
-                    continue
-                full_reply.append(token)
-                lastpos = 0
-                for i, ch in enumerate(token):
-                    if ch in _SENTENCE_PUNCT:
-                        buf += token[lastpos:i + 1]
-                        lastpos = i + 1
-                        if len(buf) > 10:
-                            s = _sanitize(buf)
-                            if s:
-                                avatar_session.put_msg_txt(s, datainfo)
-                            buf = ""
-                buf += token[lastpos:]
-            if buf:
-                s = _sanitize(buf)
-                if s:
-                    avatar_session.put_msg_txt(s, datainfo)
-            reply = _sanitize("".join(full_reply)).strip()
-        except Exception as e:
-            logger.exception("infra_ai chat exception: %s", e)
-
-    if reply:
-        agent.add_assistant_message(reply)
-
-    # 完整转录先落盘，再后台异步压缩（不阻塞本次回复）
+    tr_success = True
+    tr_fail = None
     try:
-        agent.save()
-        if agent.should_compress():
-            asyncio.create_task(agent.compress_and_save())
-    except Exception as e:
-        logger.exception("agent save/compress trigger exception: %s", e)
+        if tools:
+            final = await run_tool_loop(messages, tools, cfg)
+            final = _sanitize(final) if final else final
+            if final:
+                reply = final
+                _feed_talk(avatar_session, final, datainfo)
+            else:
+                logger.warning("tool loop returned None/empty after sanitize, use fallback phrase")
+                tr_success = False
+                tr_fail = "tool_loop_max_rounds"
+                _feed_talk(avatar_session, _TOOL_FAIL_FALLBACK, datainfo)
+        else:
+            # 无启用工具 → 保留原有流式逐字消费。缓冲区跨 token 累积，
+            # 按标点切句、超过 10 字即推送，末尾剩余部分补推。
+            # 推送前与收尾时统一过 _sanitize，保证朗读内容不含表情/markdown 字符。
+            from infra_ai import async_stream_call_llm
+            full_reply = []
+            buf = ""
+            try:
+                async for token in async_stream_call_llm(messages):
+                    if not token:
+                        continue
+                    full_reply.append(token)
+                    lastpos = 0
+                    for i, ch in enumerate(token):
+                        if ch in _SENTENCE_PUNCT:
+                            buf += token[lastpos:i + 1]
+                            lastpos = i + 1
+                            if len(buf) > 10:
+                                s = _sanitize(buf)
+                                if s:
+                                    avatar_session.put_msg_txt(s, datainfo)
+                                buf = ""
+                    buf += token[lastpos:]
+                if buf:
+                    s = _sanitize(buf)
+                    if s:
+                        avatar_session.put_msg_txt(s, datainfo)
+                reply = _sanitize("".join(full_reply)).strip()
+            except Exception as e:
+                logger.exception("infra_ai chat exception: %s", e)
+                tr_success = False
+                tr_fail = "llm_error"
+
+        if reply:
+            agent.add_assistant_message(reply)
+
+        # 完整转录先落盘，再后台异步压缩（不阻塞本次回复）
+        try:
+            agent.save()
+            if agent.should_compress():
+                asyncio.create_task(agent.compress_and_save())
+        except Exception as e:
+            logger.exception("agent save/compress trigger exception: %s", e)
+    finally:
+        _end_trace(tr_success, fail_reason=tr_fail, text_len=len(reply or ""))
 
 
 # ─── 路由处理函数 ──────────────────────────────────────────────────────────
@@ -393,6 +404,13 @@ def setup_routes(app):
                         "(pip install funasr modelscope)")
     except Exception as e:
         logger.warning(f"[ASR] Failed to register ASR endpoint: {e}")
+
+    # ── 观测平台 /api/obs/* ──
+    try:
+        from obs import setup_routes as _setup_obs
+        _setup_obs(app)
+    except Exception as e:
+        logger.warning("obs routes registration failed: %s", e)
 
     # 注册 avatar 生成相关的路由
     setup_avatar_routes(app)

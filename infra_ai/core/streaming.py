@@ -22,6 +22,7 @@ from infra_ai.inference import (
 )
 from infra_ai.core.stats import _extract_token_usage_from_text, _text_stats, _vision_stats
 from infra_ai.core.router import ModelTarget
+from infra_ai.obs_hook import emit_obs
 
 # 日志通道复用 inference 的 logger（infra_ai.inference），保持单一通道。
 
@@ -88,6 +89,7 @@ async def _stream_single_model(
     full_response = ""
     usage_meta: dict | None = None
     stats = _text_stats if label in ("text", "chat") else _vision_stats
+    succeeded = True
     try:
         async for chunk in model.astream(messages):
             # 记录流末真实 usage（若有）
@@ -124,6 +126,7 @@ async def _stream_single_model(
         # 临时性错误 → 标记失败触发熔断；致命错误不触发（问题在配置）
         from infra_ai.core.errors import classify_error
         err_type = classify_error(e)
+        succeeded = False
         health_key = target.model_id if is_routed else model_name
         if err_type.should_retry():
             health_store.mark_failure(health_key)
@@ -139,6 +142,21 @@ async def _stream_single_model(
         else:
             usage = _extract_token_usage_from_text(len(full_response))
         stats.record(elapsed, usage.get('input_tokens', 0), usage.get('output_tokens', 0))
+        emit_obs({
+            "type": "llm_call",
+            "mode": "stream",
+            "model": model_name,
+            "route": locals().get('health_key', model_name),
+            "has_tools": False,
+            "attempts": 1,
+            "elapsed_ms": round(elapsed * 1000, 1),
+            "input_tokens": usage.get('input_tokens', 0),
+            "output_tokens": usage.get('output_tokens', 0),
+            "total_tokens": usage.get('total_tokens', 0),
+            "success": succeeded,
+            "fail_reason": None,
+            "err_type": None,
+        })
         rate_limiter.record_tokens(usage.get('total_tokens', 0))
         rate_limiter.observe(usage.get('total_tokens', 0), elapsed)
         rate_limiter.release()

@@ -121,8 +121,12 @@ class ChatAgent:
         )
 
     async def _call_summarize(self, text: str) -> str:
-        """调用 LLM 把 text 压缩成摘要（硬上限 max_tokens + 提示词软约束）。"""
+        """调用 LLM 把 text 压缩成摘要（硬上限 max_tokens + 提示词软约束）。
+
+        压缩作为独立的 kind="summary" trace 观测，不污染用户请求的成功率/响应耗时。
+        """
         from infra_ai import async_call_llm
+        from obs import new_trace
 
         cfg = self._config
         prompt = (
@@ -135,13 +139,14 @@ class ChatAgent:
         if cfg.summarize_model:
             call_kwargs["model_name"] = cfg.summarize_model
 
-        result = await async_call_llm(
-            [
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": text},
-            ],
-            **call_kwargs,
-        )
+        with new_trace(self._session_id, kind="summary"):
+            result = await async_call_llm(
+                [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": text},
+                ],
+                **call_kwargs,
+            )
         return (result or "").strip()
 
     async def compress_and_save(self) -> None:

@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent 观测</title>
+    <!-- 本地化依赖（web/lib）：完全离线可用 -->
+    <link href="lib/bootstrap.min.css" rel="stylesheet">
+    <link href="lib/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-bg: #f0f4fc;
+            --card-bg: rgba(255, 255, 255, 0.85);
+            --text-dark: #1e293b;
+            --text-muted: #64748b;
+            --accent-primary: #4361ee;
+            --accent-secondary: #3f37c9;
+            --danger-color: #ef4444;
+            --success-color: #10b981;
+            --warning-color: #d97706;
+            --glass-border: rgba(255, 255, 255, 0.4);
+            --border-radius: 16px;
+            --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Inter', system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+            background: linear-gradient(135deg, #e0eafc 0%, #cfdef3 100%);
+            color: var(--text-dark);
+            min-height: 100vh; margin: 0;
+        }
+        .navbar {
+            background: var(--primary-gradient);
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+        }
+        .navbar-brand { font-weight: 700; color: #fff !important; letter-spacing: 0.3px; }
+        .container { max-width: 1240px; padding-top: 22px; padding-bottom: 40px; }
+
+        .glass-card {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--border-radius);
+            box-shadow: 0 10px 30px -10px rgba(0,0,0,0.1);
+        }
+        .card-header {
+            background: transparent;
+            border-bottom: 1px solid rgba(0,0,0,0.06);
+            padding: 16px 20px;
+            font-weight: 700;
+            font-size: 1.02rem;
+            display: flex; align-items: center;
+        }
+        .card-header i { margin-right: 9px; color: var(--accent-primary); }
+        .card-body { padding: 18px 20px; }
+
+        /* ── 指标卡片 ── */
+        .stat-card { text-align: center; padding: 20px 12px; height: 100%; }
+        .stat-value { font-size: 1.9rem; font-weight: 800; color: var(--accent-primary); line-height: 1.15; }
+        .stat-label { font-size: 0.82rem; color: var(--text-muted); margin-top: 6px; }
+        .stat-sub { font-size: 0.72rem; color: var(--text-muted); margin-top: 2px; }
+        .stat-card .bi { font-size: 1.2rem; color: var(--accent-secondary); }
+
+        .chart-box { height: 300px; width: 100%; }
+
+        /* ── 请求表 ── */
+        .req-table { width: 100%; font-size: 0.88rem; }
+        .req-table th {
+            color: var(--text-muted); font-weight: 600; text-transform: uppercase;
+            font-size: 0.76rem; letter-spacing: 0.4px; border-bottom: 2px solid rgba(0,0,0,0.06);
+            padding: 8px 10px; text-align: left; white-space: nowrap;
+        }
+        .req-table td { padding: 9px 10px; border-bottom: 1px solid rgba(0,0,0,0.05); vertical-align: middle; }
+        .req-table tbody tr.request-row { cursor: pointer; }
+        .req-table tbody tr.request-row:hover { background: rgba(67, 97, 238, 0.06); }
+        .req-table .msg-preview { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dark); }
+
+        .badge-status { font-size: 0.72rem; padding: 3px 10px; border-radius: 20px; font-weight: 600; white-space: nowrap; }
+        .status-ok     { background: rgba(16,185,129,0.15); color: #059669; }
+        .status-fail   { background: rgba(239,68,68,0.12); color: #dc2626; }
+        .status-pending{ background: rgba(217,119,6,0.12); color: #b45309; }
+
+        /* ── 展开 trace 时间线 ── */
+        .trace-detail { background: #f7f9fd; border-radius: 10px; padding: 12px 14px; }
+        .span-line { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 0.84rem; border-bottom: 1px dashed rgba(0,0,0,0.06); }
+        .span-line:last-child { border-bottom: none; }
+        .span-icon { width: 26px; text-align: center; font-size: 1rem; flex-shrink: 0; }
+        .span-name { font-weight: 600; color: var(--text-dark); }
+        .span-meta { color: var(--text-muted); font-size: 0.78rem; }
+        .span-ms { font-weight: 700; color: var(--accent-primary); margin-left: auto; white-space: nowrap; }
+        .arrow-indicator { color: var(--accent-secondary); font-size: 0.8rem; margin-left: 6px; transition: transform .15s; display: inline-block; }
+
+        .empty-state { text-align: center; padding: 30px 16px; color: var(--text-muted); }
+        .empty-state i { font-size: 2.4rem; color: #cbd5e1; margin-bottom: 10px; display: block; }
+        .skeleton {
+            background: linear-gradient(90deg,#f0f0f0 25%,#e0e0e0 50%,#f0f0f0 75%);
+            background-size: 200% 100%; animation: loading 1.5s infinite;
+            border-radius: 8px; height: 160px; padding: 14px;
+        }
+        @keyframes loading { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
+        .refresh-spinner { font-size: 0.8rem; color: var(--text-muted); margin-left: auto; font-weight: 400; }
+        .footer-hint { font-size: 0.8rem; color: var(--text-muted); text-align: center; margin-top: 26px; }
+    </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark">
+    <div class="container-fluid px-4">
+        <a class="navbar-brand" href="#"><i class="bi bi-activity me-2"></i>Agent 观测</a>
+        <div class="d-flex align-items-center gap-2">
+            <a class="btn btn-sm btn-outline-light" href="/admin.html"><i class="bi bi-speedometer2"></i><span class="d-none d-sm-inline"> 后台</span></a>
+            <button class="btn btn-sm btn-outline-light" onclick="refreshAll()"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
+            <button class="btn btn-sm btn-outline-light" id="autoToggle" onclick="toggleAuto()"><i class="bi bi-play-fill"></i> 自动刷新</button>
+        </div>
+    </div>
+</nav>
+
+<div class="container">
+
+    <!-- ═══════ 指标卡片 ═══════ -->
+    <div class="row g-3" id="statCards">
+        <div class="col-6 col-md-3"><div class="glass-card stat-card"><div class="skeleton"></div></div></div>
+        <div class="col-6 col-md-3"><div class="glass-card stat-card"><div class="skeleton"></div></div></div>
+        <div class="col-6 col-md-3"><div class="glass-card stat-card"><div class="skeleton"></div></div></div>
+        <div class="col-6 col-md-3"><div class="glass-card stat-card"><div class="skeleton"></div></div></div>
+        <div class="col-6 col-md-3"><div class="glass-card stat-card"><div class="skeleton"></div></div></div>
+        <div class="col-6 col-md-3"><div class="glass-card stat-card"><div class="skeleton"></div></div></div>
+    </div>
+
+    <!-- ═══════ 图表 ═══════ -->
+    <div class="row g-3 mt-1">
+        <div class="col-lg-4">
+            <div class="glass-card h-100">
+                <div class="card-header"><i class="bi bi-grid-1x2-fill"></i> 响应耗时趋势 (ms)</div>
+                <div class="card-body"><div id="chartTrend" class="chart-box"><div class="skeleton"></div></div></div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="glass-card h-100">
+                <div class="card-header"><i class="bi bi-robot"></i> 各模型平均耗时 (ms)</div>
+                <div class="card-body"><div id="chartModel" class="chart-box"><div class="skeleton"></div></div></div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="glass-card h-100">
+                <div class="card-header"><i class="bi bi-pie-chart-fill"></i> 请求成功 / 失败</div>
+                <div class="card-body"><div id="chartDonut" class="chart-box"><div class="skeleton"></div></div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════ 最近请求 ═══════ -->
+    <div class="glass-card mt-4">
+        <div class="card-header">
+            <i class="bi bi-clock-history"></i> 最近请求 <span class="badge bg-primary ms-2 rounded-pill" id="reqCount">0</span>
+            <span class="refresh-spinner" id="refreshInfo">手动刷新</span>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="req-table" id="reqTable">
+                    <thead><tr>
+                        <th>时间</th><th>会话</th><th>用户消息</th>
+                        <th>响应耗时</th><th>状态</th><th>工具轮</th><th>LLM</th><th></th>
+                    </tr></thead>
+                    <tbody id="reqBody"><tr><td colspan="8" class="empty-state"><i class="bi bi-inbox"></i>加载中...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer-hint"><i class="bi bi-info-circle me-1"></i>接口：/api/obs/summary、/api/obs/requests、/api/obs/request/{trace_id}</div>
+</div>
+
+<script src="lib/jquery-2.1.1.min.js"></script>
+<script src="lib/bootstrap.bundle.min.js"></script>
+<script src="lib/echarts.min.js"></script>
+<script>
+/* ==========================================================
+ *  观测面板：指标卡片 + 3 图 + 最近请求表(可展开 trace)
+ * ========================================================== */
+let trendChart, modelChart, donutChart;
+let POLL = 5000;
+let pollTimer = null;   // 自动刷新定时器
+let autoEnabled = false; // 自动刷新开关（默认关，需用户开启）
+
+const C_OK = '#10b981', C_FAIL = '#ef4444', C_ACC = '#4361ee', C_ACC2 = '#764ba2';
+
+function fmtMs(ms) {
+    if (ms === null || ms === undefined) return '—';
+    if (ms >= 1000) return (ms / 1000).toFixed(2) + 's';
+    return Math.round(ms) + 'ms';
+}
+function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function fmtTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    if (isNaN(d)) return '';
+    return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)+':'+('0'+d.getSeconds()).slice(-2);
+}
+
+/* ---------- 指标卡片 ---------- */
+function renderStats(s) {
+    const rt = s.response_time || {};
+    const tk = s.total_tokens || {};
+    const cells = [
+        { label: '成功率', value: (s.success_rate * 100).toFixed(1) + '%', sub: (s.success || 0) + ' / ' + (s.traces || 0) + ' 成功', color: C_OK },
+        { label: '平均响应', value: fmtMs(rt.avg), sub: '窗口内 ' + (s.traces || 0) + ' 个请求', color: C_ACC },
+        { label: 'P50 响应', value: fmtMs(rt.p50), sub: '中位数耗时', color: C_ACC },
+        { label: 'P90 响应', value: fmtMs(rt.p90), sub: '90 分位耗时', color: C_ACC },
+        { label: 'LLM 调用', value: String(s.total_llm_calls || 0), sub: (s.tool_rounds || 0) + ' 轮工具 / ' + (s.total_tool_calls || 0) + ' 次', color: C_ACC2 },
+        { label: '总 Token', value: ((tk.total || 0) / 1000).toFixed(1) + 'k', sub: '入 ' + (tk.input || 0) + ' / 出 ' + (tk.output || 0), color: C_ACC2 },
+    ];
+    let html = cells.map(c => `
+        <div class="col-6 col-md-3">
+            <div class="glass-card stat-card">
+                <div class="stat-value" style="color:${c.color}">${c.value}</div>
+                <div class="stat-label">${c.label}</div>
+                ${c.sub ? `<div class="stat-sub">${c.sub}</div>` : ''}
+            </div>
+        </div>`).join('');
+    $('#statCards').html(html);
+}
+
+/* ---------- 图表 ---------- */
+function ensureCharts() {
+    if (!trendChart) trendChart = echarts.init(document.getElementById('chartTrend'));
+    if (!modelChart) modelChart = echarts.init(document.getElementById('chartModel'));
+    if (!donutChart) donutChart = echarts.init(document.getElementById('chartDonut'));
+    window.addEventListener('resize', () => { trendChart.resize(); modelChart.resize(); donutChart.resize(); });
+}
+
+function renderCharts(s, requests) {
+    ensureCharts();
+    const reqs = (requests || []).slice().reverse(); // 变旧→新
+    // 趋势折线
+    trendChart.setOption({
+        grid: { left: 46, right: 16, top: 20, bottom: 30 },
+        tooltip: { trigger: 'axis' },
+        xAxis: { type: 'category', data: reqs.map(r => fmtTime(r.ts)), axisLabel: { fontSize: 10 } },
+        yAxis: { type: 'value', axisLabel: { fontSize: 10, formatter: v => v + 'ms' } },
+        series: [{
+            name: '响应耗时', type: 'line', smooth: true, symbol: 'circle', symbolSize: 6,
+            data: reqs.map(r => r.elapsed_ms),
+            lineStyle: { color: C_ACC, width: 2 },
+            itemStyle: { color: C_ACC },
+            areaStyle: { color: { type: 'linear', x:0,y:0,x2:0,y2:1,
+                colorStops: [{offset:0,color:'rgba(67,97,238,.28)'},{offset:1,color:'rgba(67,97,238,0)'}] } }
+        }]
+    }, true);
+    // 各模型平均耗时柱状
+    const models = s.per_model || [];
+    modelChart.setOption({
+        grid: { left: 46, right: 16, top: 20, bottom: 40 },
+        tooltip: { trigger: 'axis' },
+        xAxis: { type: 'category', data: models.map(m => m.model), axisLabel: { fontSize: 9, interval: 0, rotate: 20 } },
+        yAxis: { type: 'value', axisLabel: { fontSize: 10, formatter: v => v + 'ms' } },
+        series: [{
+            name: '平均耗时', type: 'bar', barMaxWidth: 46,
+            data: models.map(m => ({ value: m.avg_elapsed_ms, itemStyle: { color: C_ACC } })),
+            label: { show: true, position: 'top', fontSize: 9, formatter: p => p.value + 'ms' }
+        }]
+    }, true);
+    // 成功/失败环图
+    const ok = s.success || 0, fail = (s.traces || 0) - ok;
+    donutChart.setOption({
+        tooltip: { trigger: 'item', formatter: p => p.name + ': ' + p.value + ' (' + p.percent + '%)' },
+        legend: { bottom: 0, textStyle: { fontSize: 11 } },
+        series: [{
+            type: 'pie', radius: ['46%', '68%'], center: ['50%', '44%'], avoidLabelOverlap: false,
+            label: { show: true, formatter: '{b}\n{d}%', fontSize: 11 },
+            data: [
+                { value: ok, name: '成功', itemStyle: { color: C_OK } },
+                { value: fail, name: '失败', itemStyle: { color: C_FAIL } }
+            ]
+        }]
+    }, true);
+}
+
+/* ---------- 最近请求表 ---------- */
+let expanded = {}; // trace_id -> 是否展开
+
+function renderRequests(requests) {
+    const body = $('#reqBody');
+    if (!requests.length) {
+        body.html('<tr><td colspan="8" class="empty-state"><i class="bi bi-inbox"></i>暂无请求，发送一句对话后自动出现。</td></tr>');
+        $('#reqCount').text(0);
+        return;
+    }
+    $('#reqCount').text(requests.length);
+    let html = '';
+    requests.forEach(r => {
+        const ok = r.success === null ? 'pending' : (r.success ? 'ok' : 'fail');
+        const label = r.success === null ? '进行中' : (r.success ? '成功' : '失败');
+        const arrow = expanded[r.trace_id] ? 'rotate(90deg)' : '';
+        html += `
+        <tr class="request-row" data-tid="${r.trace_id}">
+            <td style="white-space:nowrap">${fmtTime(r.ts)}</td>
+            <td style="white-space:nowrap" class="text-muted">${esc(String(r.session_id||'').slice(0,12))}</td>
+            <td class="msg-preview" title="${esc(r.msg_preview||'')}">${esc(r.msg_preview||'')}</td>
+            <td class="text-muted">${fmtMs(r.elapsed_ms)}</td>
+            <td><span class="badge-status status-${ok}">${label}</span></td>
+            <td>${r.tool_rounds == null ? '—' : r.tool_rounds}</td>
+            <td>${r.llm_calls == null ? '—' : r.llm_calls}</td>
+            <td><span class="arrow-indicator" style="transform:${arrow}"><i class="bi bi-chevron-right"></i></span></td>
+        </tr>
+        <tr class="trace-row" data-tid="${r.trace_id}" style="display:${expanded[r.trace_id] ? '' : 'none'}">
+            <td colspan="8">${expanded[r.trace_id] ? '<div class="trace-detail">加载中...</div>' : ''}</td>
+        </tr>`;
+    });
+    body.html(html);
+}
+
+$(document).on('click', '.request-row', function () {
+    const tid = $(this).data('tid');
+    expanded[tid] = !expanded[tid];
+    renderRequests(lastRequests || []);
+    loadTrace(tid);
+});
+
+function loadTrace(tid) {
+    fetch('/api/obs/request/' + tid).then(r => r.json()).then(j => {
+        const evs = (j.data && j.data.events) || [];
+        $('.trace-row[data-tid="' + tid + '"] .trace-detail').html(renderTimeline(evs));
+    }).catch(() => {});
+}
+
+function renderTimeline(evs) {
+    if (!evs.length) return '<div class="empty-state">无事件</div>';
+    const icon = { trace_start:'🚀', llm_call:'🤖', tool_round:'🔁', tool_call:'🛠', trace_end:'✅' };
+    let lastRound = -1;
+    const lines = evs.map(ev => {
+        let iconC = icon[ev.type] || '·';
+        let name = '', meta = '';
+        if (ev.type === 'trace_start') { name = '请求开始'; meta = '工具模式: ' + (ev.tool_mode ? '开' : '关'); }
+        else if (ev.type === 'trace_end') { name = '请求结束'; meta = ev.fail_reason ? ('失败: ' + ev.fail_reason) : '成功'; }
+        else if (ev.type === 'llm_call') {
+            name = 'LLM ' + (ev.mode === 'stream' ? '流式' : '调用');
+            meta = `${ev.model || ev.route || '?'} · 入${ev.input_tokens||0}/出${ev.output_tokens||0}tok` +
+                   (ev.has_tools ? ' · tools' : '') + (ev.success ? '' : ' · ✗ ' + (ev.fail_reason||'失败'));
+            iconC = ev.success ? '🤖' : '❗';
+        }
+        else if (ev.type === 'tool_round') { name = '工具轮 #' + ev.round; meta = ev.n_tool_calls + ' 次调用' + (ev.answered ? ' · 出答案' : ''); }
+        else if (ev.type === 'tool_call') {
+            name = '工具 ' + (ev.tool || '?');
+            meta = esc(ev.args ? ev.args.slice(0,60) : '') + (ev.success ? '' : ' · ✗ ' + esc(ev.error||'失败'));
+            if (ev.result_snippet) meta += '  → ' + esc(ev.result_snippet.slice(0,60));
+            iconC = ev.success ? '🛠' : '⚠️';
+        }
+        return `<div class="span-line"><span class="span-icon">${iconC}</span>
+            <span class="span-name">${esc(name)}</span>
+            <span class="span-meta">${meta}</span>
+            ${ev.elapsed_ms != null ? `<span class="span-ms">${fmtMs(ev.elapsed_ms)}</span>` : ''}</div>`;
+    });
+    return lines.join('');
+}
+
+/* ---------- 刷新 / 自动刷新 ---------- */
+let lastRequests = [];
+
+function toggleAuto() {
+    autoEnabled = !autoEnabled;
+    const btn = $('#autoToggle');
+    if (autoEnabled) {
+        btn.removeClass('btn-outline-light').addClass('btn-primary active');
+        btn.html('<i class="bi bi-pause-fill"></i> 停止自动刷新');
+        $('#refreshInfo').html('<i class="bi bi-arrow-repeat spin"></i> 自动刷新中（5s）');
+        pollTimer = setInterval(refreshAll, POLL);
+    } else {
+        btn.addClass('btn-outline-light').removeClass('btn-primary active');
+        btn.html('<i class="bi bi-play-fill"></i> 自动刷新');
+        $('#refreshInfo').text('手动刷新');
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    }
+}
+
+async function refreshAll() {
+    try {
+        const [sr, rr] = await Promise.all([
+            fetch('/api/obs/summary?window=3600').then(r => r.json()),
+            fetch('/api/obs/requests?limit=50').then(r => r.json()),
+        ]);
+        const s = sr.data || {}, re = (rr.data && rr.data.requests) || [];
+        lastRequests = re;
+        renderStats(s);
+        renderCharts(s, re);
+        renderRequests(re);
+        // 保持当前展开的 trace 在新一轮刷新后仍展开，并重新拉取最新明细
+        const openTids = Object.keys(expanded).filter(tid => expanded[tid]);
+        openTids.forEach(tid => {
+            if (re.some(r => r.trace_id === tid)) loadTrace(tid);
+        });
+    } catch (e) { /* 瞬时错误忽略 */ }
+}
+
+$(function () {
+    $('#refreshInfo').text('手动刷新');   // 默认关闭自动刷新
+    refreshAll();                          // 进入时拉取一次
+});
+</script>
+</body>
+</html>

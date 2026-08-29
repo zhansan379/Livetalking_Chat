@@ -13,10 +13,34 @@
 
 import asyncio
 import json
+import time
 import urllib.parse
 import urllib.request
 
 from utils.logger import logger
+
+# 观测：随 obs 包可用与否优雅降级（观测失败不影响工具循环）
+try:
+    from obs import emit, round_span
+except Exception:  # noqa: BLE001 - obs 缺失时用空实现，工具循环照常运行
+    import contextlib
+
+    class _DummyRound:
+        n_tool_calls = 0
+
+    @contextlib.asynccontextmanager
+    async def _round_span(_idx):
+        yield _DummyRound()
+
+    def _emit(_ev):
+        return None
+
+    round_span, emit = _round_span, _emit
+
+
+def _trunc(text, n=200):
+    text = str(text or "")
+    return text if len(text) <= n else text[:n] + "…"
 
 
 # ─── 网络搜索执行（DuckDuckGo）─────────────────────────────────────────────
@@ -290,34 +314,51 @@ async def run_tool_loop(agent_messages: list, tools: list[dict], cfg) -> str | N
     from infra_ai import async_call_llm_with_tools
 
     msgs = list(agent_messages)
-    for _ in range(cfg.tool_max_rounds):
-        try:
-            resp = await async_call_llm_with_tools(msgs, tools)
-        except Exception as e:  # noqa: BLE001 - LLM 调用失败：让上层走降级话术
-            logger.exception("run_tool_loop LLM call failed: %s", e)
-            return None
-
-        tool_calls = getattr(resp, "tool_calls", None)
-        if not tool_calls:
-            # 模型决定不再调工具 → 这就是最终答案，循环唯一出口
-            return (getattr(resp, "content", None) or "").strip()
-
-        msgs.append(_assistant_turn(resp, tool_calls))
-        for tc in tool_calls:
-            handler = TOOL_REGISTRY.get(tc.function.name, {}).get("handler")
+    for idx in range(cfg.tool_max_rounds):
+        async with round_span(idx) as rd:
             try:
-                args = json.loads(tc.function.arguments or "{}")
-            except json.JSONDecodeError:
-                args = {}
-            if handler is None:
-                result = f"（未知工具：{tc.function.name}）"
-            else:
+                resp = await async_call_llm_with_tools(msgs, tools)
+            except Exception as e:  # noqa: BLE001 - LLM 调用失败：让上层走降级话术
+                logger.exception("run_tool_loop LLM call failed: %s", e)
+                return None
+
+            tool_calls = getattr(resp, "tool_calls", None)
+            if not tool_calls:
+                # 模型决定不再调工具 → 这就是最终答案，循环唯一出口；本轮不调工具
+                return (getattr(resp, "content", None) or "").strip()
+
+            rd.n_tool_calls = len(tool_calls)
+            msgs.append(_assistant_turn(resp, tool_calls))
+            for tc in tool_calls:
+                handler = TOOL_REGISTRY.get(tc.function.name, {}).get("handler")
                 try:
-                    result = await handler(args, cfg) or "（工具无输出）"
-                except Exception as e:  # noqa: BLE001 - 单个工具失败不中断循环
-                    logger.exception("tool %s handler failed: %s", tc.function.name, e)
-                    result = f"（工具 <{tc.function.name}> 执行失败：{e}）"
-            msgs.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+                    args = json.loads(tc.function.arguments or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                t0 = time.monotonic()
+                tool_name = tc.function.name
+                if handler is None:
+                    result = f"（未知工具：{tool_name}）"
+                    ok, err = True, None
+                else:
+                    try:
+                        result = await handler(args, cfg) or "（工具无输出）"
+                        ok, err = True, None
+                    except Exception as e:  # noqa: BLE001 - 单个工具失败不中断循环
+                        logger.exception("tool %s handler failed: %s", tool_name, e)
+                        result = f"（工具 <{tool_name}> 执行失败：{e}）"
+                        ok, err = False, str(e)
+                emit({
+                    "type": "tool_call",
+                    "round": idx,
+                    "tool": tool_name,
+                    "args": _trunc(json.dumps(args, ensure_ascii=False), 200) if args else "{}",
+                    "result_snippet": _trunc(result, 200),
+                    "elapsed_ms": round((time.monotonic() - t0) * 1000, 1),
+                    "success": ok,
+                    "error": err,
+                })
+                msgs.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
     logger.error("tool loop hit %d rounds without a text answer", cfg.tool_max_rounds)
     return None

@@ -36,6 +36,7 @@ from infra_ai.core.stats import (
     _text_stats,
     _vision_stats,
 )
+from infra_ai.obs_hook import emit_obs
 logger = logging.getLogger(__name__)
 
 # 注：日志配置交由宿主导入方完成；库代码不设置级别/handler（避免污染调用进程）。
@@ -576,6 +577,22 @@ async def _invoke_with_retry(
             # 熔断器：标记成功（统一身份）
             get_health_store().mark_success(health_key)
 
+            emit_obs({
+                "type": "llm_call",
+                "mode": "nonstream",
+                "model": model_name,
+                "route": health_key,
+                "has_tools": bool(tools),
+                "attempts": attempt + 1,
+                "elapsed_ms": round(elapsed * 1000, 1),
+                "input_tokens": usage.get('input_tokens', 0),
+                "output_tokens": usage.get('output_tokens', 0),
+                "total_tokens": usage.get('total_tokens', 0),
+                "success": True,
+                "fail_reason": None,
+                "err_type": None,
+            })
+
             message = response.choices[0].message
             # 有工具时返回完整 message（调用方需要 .tool_calls）
             if tools:
@@ -635,6 +652,21 @@ async def _invoke_with_retry(
         # 致命错误不触发熔断（问题在配置，不在模型）
     fail_reason = f"{fail_reason}/{err_type.value}"
     stats.record_failure()
+    emit_obs({
+        "type": "llm_call",
+        "mode": "nonstream",
+        "model": model_name,
+        "route": health_key,
+        "has_tools": bool(tools),
+        "attempts": attempt + 1,
+        "elapsed_ms": round(elapsed * 1000, 1),
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "success": False,
+        "fail_reason": fail_reason,
+        "err_type": err_type.value,
+    })
     _write_error_log(
         label=label,
         model_name=model_name,

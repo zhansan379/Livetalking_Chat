@@ -127,6 +127,14 @@ def main():
     from config import parse_args
     opt = parse_args()
 
+    # ─── 观测平台启动：连接 infra_ai 的 obs_hook ──────────────────────
+    try:
+        from obs import install as _obs_install, is_enabled as _obs_enabled
+        _obs_install()
+        logger.info("[obs] observability enabled=%s", _obs_enabled())
+    except Exception as e:
+        logger.warning("[obs] install failed: %s", e)
+
     # ─── 加载 avatar 插件（触发 @register 注册）──────────────────────
     _avatar_modules = {
         'musetalk':   'avatars.musetalk_avatar',
