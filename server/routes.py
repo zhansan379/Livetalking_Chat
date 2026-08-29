@@ -87,6 +87,11 @@ def _feed_talk(avatar_session, text: str, datainfo: dict):
         avatar_session.put_msg_txt(buf, datainfo)
 
 
+def _notify_reply_start(avatar_session):
+    """新一轮回答开始：通知前端清空字幕，后续句子逐句追加成完整回答。"""
+    avatar_session.send_msg(json.dumps({"status": "reply_start"}))
+
+
 async def stream_llm_chat(avatar_session, session_id: str, message: str, datainfo: dict = {}):
     """基于 infra_ai + agent 记忆的问答：优先走工具循环，无启用工具时退回流式问答。
 
@@ -106,6 +111,7 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str, datainf
 
     cfg = get_agent_config()
     tools = build_tools(list_enabled_tools(cfg))
+    _notify_reply_start(avatar_session)  # 新一轮回答开始，前端清空字幕后逐句追加
 
     reply = None
     if tools:
@@ -180,6 +186,7 @@ async def human(request):
             datainfo['tts'] = params.get('tts')
 
         if params['type'] == 'echo':
+            _notify_reply_start(avatar_session)
             avatar_session.put_msg_txt(params['text'], datainfo)
         elif params['type'] == 'chat':
             # 后台流式消费 infra_ai，避免阻塞 /human 响应（与旧 executor 语义一致）

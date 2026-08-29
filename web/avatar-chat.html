@@ -462,9 +462,13 @@
         subtitleES = new EventSource('/sse?sessionid=' + getSessionId());
         subtitleES.onmessage = function (ev) {
             var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
-            // 只在朗读开始时更新字幕，end 保留最后一句直至被下一句覆盖
-            if (m && m.status === 'start' && m.text) {
-                document.getElementById('subtitle').textContent = m.text;
+            if (!m) return;
+            var el = document.getElementById('subtitle');
+            // 新一轮回答开始 → 清空字幕；此后每句 start 逐句追加，累积成完整回答
+            if (m.status === 'reply_start') {
+                el.textContent = '';
+            } else if (m.status === 'start' && m.text) {
+                el.textContent += m.text;
             }
         };
         subtitleES.onerror = function () {};  // EventSource 自动重连，忽略
