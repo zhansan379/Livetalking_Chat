@@ -50,6 +50,9 @@ _DEFAULT = {
             "store_path": "data/reminders.json",
             "max_delay_seconds": 604800,
         },
+        "look_at_user": {
+            "enabled": False,
+        },
     },
 }
 
@@ -139,6 +142,9 @@ class AgentConfig:
         self.reminder_max_delay_seconds: int = int(
             w_reminder.get("max_delay_seconds", 604800) or 604800
         )
+
+        w_camera = tools.get("look_at_user", {}) or {}
+        self.tool_look_at_user_enabled: bool = bool(w_camera.get("enabled", False))
 
     @property
     def max_summary_tokens(self) -> int:

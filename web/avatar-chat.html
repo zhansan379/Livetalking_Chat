@@ -143,6 +143,37 @@
         #btn-call.active .mic-off { display: block; }
         #btn-call.active .mic { display: none; }
 
+        #btn-camera { color: var(--text-secondary); }
+        #btn-camera .cam-on { display: none; }
+        #btn-camera .cam-off { display: block; }
+        #btn-camera.active { color: #ffcf5b; }
+        #btn-camera.active .cam-on { display: block; }
+        #btn-camera.active .cam-off { display: none; }
+
+        #camera-indicator {
+            position: fixed;
+            left: 50%;
+            bottom: 6px;
+            transform: translateX(-50%);
+            z-index: 16;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            padding: 5px 12px;
+            border-radius: 999px;
+            font-size: 12px;
+            color: var(--text-faint);
+            background: rgba(0,0,0,.45);
+            pointer-events: none;
+            transition: opacity .3s;
+        }
+        #camera-indicator .dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #555;
+        }
+        #camera-indicator.cam-on .dot { background: #ff4d4f; box-shadow: 0 0 6px #ff4d4f; animation: cam-pulse 1.4s infinite; }
+        @keyframes cam-pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
         #msg {
             flex: 1;
             min-width: 180px;
@@ -426,7 +457,13 @@
         <svg class="ic" aria-hidden="true" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
         <span>设置</span>
     </button>
+    <button id="btn-camera" class="bar-btn" onclick="toggleCamera()" aria-label="摄像头">
+        <svg class="ic cam-on" aria-hidden="true" viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+        <svg class="ic cam-off" aria-hidden="true" viewBox="0 0 24 24"><line x1="2" y1="2" x2="22" y2="22"/><path d="M23 7l-7 5 7 5V7z"/><path d="M16 13.5V7a2 2 0 0 0-2-2H6.5"/><path d="M2 19h13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span id="camera-label">摄像头</span>
+    </button>
 </div>
+<div id="camera-indicator"><span class="dot"></span><span id="camera-indicator-text">摄像头已关闭</span></div>
 
 <!-- 设置弹窗 (藏起原 input text / Use STUN server / asr服务器地址) -->
 <div id="modal-mask" onclick="if(event.target===this)closeSettings()">
@@ -572,6 +609,7 @@
             return response.json();
         }).then(function (answer) {
             document.getElementById('sessionid').value = answer.sessionid || '0';
+            if (camOn) { if (camWS) { try { camWS.close(); } catch (e) {} camWS = null; } camWSLoop(); }  // 会话id就绪后重绑摄像头WS
             return pc.setRemoteDescription(answer);
         }).catch(function (e) {
             console.error('WebRTC negotiate error:', e);
@@ -702,6 +740,92 @@
 
     function stopSubtitle() {
         if (subtitleES) { subtitleES.close(); subtitleES = null; }
+    }
+
+    /* ==========================================================
+     * 4. 摄像头「看用户」：按需抓帧喂给后端 look_at_user 工具
+     *    隐私：点开开关才打开摄像头（静默开流、本地不显示画面）；
+     *    后端要帧才通过 WS 发 capture_request，现场抓一帧 JPEG 回传即弃；
+     *    关闭则停流 + 断开 WS。指示灯出现红色脉冲点 = 摄像头在开。
+     * ========================================================== */
+    var camOn = false;         // 摄像头开关
+    var camStream = null;      // getUserMedia 媒体流
+    var camVideo = null;       // 隐藏预览 video（仅用于抓帧）
+    var camWS = null;          // /api/camera/ws
+    var analyzingCam = false;  // 抓帧中，防并发
+
+    function renderCam() {
+        var b = document.getElementById('btn-camera');
+        var l = document.getElementById('camera-label');
+        if (l) l.textContent = camOn ? '摄像头 开' : '摄像头';
+        if (b) b.classList.toggle('active', camOn);
+        var ind = document.getElementById('camera-indicator');
+        if (ind) {
+            ind.classList.toggle('cam-on', camOn);
+            var t = document.getElementById('camera-indicator-text');
+            if (t) t.textContent = camOn ? '摄像头已开启 · 对话中有可能被查看' : '摄像头已关闭';
+        }
+    }
+
+    function toggleCamera() {
+        if (camOn) { stopCamera(); } else { startCamera(); }
+    }
+
+    function camWSLoop() {
+        if (!camOn) return;
+        var wsProto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+        camWS = new WebSocket(wsProto + location.host + '/api/camera/ws?session=' + encodeURIComponent(getSessionId()));
+        camWS.onmessage = function (ev) {
+            var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+            if (m && m.type === 'capture_request' && !analyzingCam) captureAndSend();
+        };
+        camWS.onclose = function () { if (camOn) setTimeout(camWSLoop, 1500); };
+        camWS.onerror = function () { try { camWS.close(); } catch (e) {} };
+    }
+
+    function captureAndSend() {
+        if (!camVideo || camVideo.readyState < 2 || !camWS || camWS.readyState !== 1) return;
+        analyzingCam = true;
+        try {
+            var w = camVideo.videoWidth || 480, h = camVideo.videoHeight || 270;
+            var c = document.createElement('canvas');
+            c.width = Math.min(w, 480);   // 降采样，别传高清原图
+            c.height = Math.max(1, Math.round(h * (c.width / (w || 1))));
+            c.getContext('2d').drawImage(camVideo, 0, 0, c.width, c.height);
+            camWS.send(JSON.stringify({ type: 'snapshot', data: c.toDataURL('image/jpeg', 0.6) }));
+        } catch (e) { }
+        analyzingCam = false;
+    }
+
+    async function startCamera() {
+        if (camOn) return;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            renderCam();
+            alert('当前浏览器不支持摄像头');
+            return;
+        }
+        try {
+            camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 480 } });
+        } catch (e) {
+            renderCam();
+            alert('摄像头授权失败或被拒绝：' + (e && e.name ? e.name : e));
+            return;
+        }
+        camVideo = document.createElement('video');
+        camVideo.muted = true; camVideo.playsInline = true;
+        camVideo.srcObject = camStream;
+        try { await camVideo.play(); } catch (e) { }
+        camOn = true;
+        renderCam();
+        camWSLoop();
+    }
+
+    function stopCamera() {
+        camOn = false;
+        if (camWS) { try { camWS.close(); } catch (e) {} camWS = null; }
+        if (camStream) { camStream.getTracks().forEach(function (t) { t.stop(); }); camStream = null; }
+        camVideo = null;
+        renderCam();
     }
 
     function bargeInEnabled() {

@@ -22,6 +22,7 @@
 - **可插拔模型**：支持 `wav2lip` / `musetalk` / `ultralight` 数字人模型
 - **多 TTS 引擎**：edge-tts / gpt-sovits / cosyvoice / fishtts / tencent / doubao / indextts2 / azuretts / qwentts
 - **本地 ASR 端点**：可选集成 FunASR/SenseVoice（`/api/asr`），亦支持外部 FunASR 服务并带热词
+- **摄像头「看用户」**：数字人可经 agent 工具按需抓一帧摄像头画面交给视觉模型，描述用户当下状态（见 [`docs/摄像头看用户工具.md`](docs/摄像头看用户工具.md)）
 - **管理后台**：`web/admin.html` 查看全局配置与活跃会话
 - **多种推流方式**：WebRTC / RTMP / RTCPush / 虚拟摄像头（virtualcam）
 

@@ -22,6 +22,9 @@ from utils.logger import logger
 # 全局定时提醒工具（不绑定 session，到点对当前在线会话开口）
 from agent.reminder import humanize_delay, reminder_manager, validate_cron as _validate_cron
 
+# 摄像头「看用户」工具（按 session 绑定浏览器，按需抓一帧给视觉模型）
+from agent.camera import look_at_user
+
 # 观测：随 obs 包可用与否优雅降级（观测失败不影响工具循环）
 try:
     from obs import emit, round_span
@@ -46,8 +49,21 @@ def _trunc(text, n=200):
     return text if len(text) <= n else text[:n] + "…"
 
 
+class ToolContext:
+    """一次工具循环的调用上下文（按需传入，如当前会话绑定的 session_id）。
+
+    工具执行用了哪些工具、怎么组织、由本轮对话上下文决定；这里的字段都是
+    可选附加上下文。工具 handler 统一签名：async def handler(args, cfg, ctx=None)。
+    """
+
+    __slots__ = ("session_id",)
+
+    def __init__(self, session_id: str | None = None):
+        self.session_id = session_id
+
+
 # ─── 网络搜索执行（DuckDuckGo）─────────────────────────────────────────────
-async def web_search(args: dict, cfg) -> str:
+async def web_search(args: dict, cfg, ctx=None) -> str:
     """执行一次网络搜索，返回若干条「标题+链接+摘要」拼成的文本。"""
     query = (args or {}).get("query", "")
     if not query:
@@ -172,7 +188,7 @@ def _resolve_city(raw_city: str, cfg) -> tuple[float, float, str]:
     return float(first["latitude"]), float(first["longitude"]), display
 
 
-async def get_weather(args: dict, cfg) -> str:
+async def get_weather(args: dict, cfg, ctx=None) -> str:
     """查询指定城市的实时天气，返回一段中文描述。"""
     raw_city = (args or {}).get("city", "").strip()
     if not raw_city:
@@ -228,7 +244,7 @@ async def get_weather(args: dict, cfg) -> str:
 
 
 # ─── 全局定时提醒（一次性延时 / 每日 cron，跨 session、跨重启持久化）─────────
-async def schedule_reminder(args: dict, cfg) -> str:
+async def schedule_reminder(args: dict, cfg, ctx=None) -> str:
     """设置一条全局定时提醒：要么给 delay_seconds（一次性），要么给 cron（重复）。
 
     到点由**当前所有在线会话**的数字人主动开口提醒。返回确认文本让模型复述。
@@ -260,7 +276,7 @@ async def schedule_reminder(args: dict, cfg) -> str:
     return "（提醒参数不完整，无法设置提醒：需要 delay_seconds+content 或 cron+content）"
 
 
-async def cancel_reminder(args: dict, cfg) -> str:
+async def cancel_reminder(args: dict, cfg, ctx=None) -> str:
     """取消一条已设置的提醒。"""
     rid = ((args or {}).get("reminder_id") or "").strip()
     if not rid:
@@ -271,7 +287,7 @@ async def cancel_reminder(args: dict, cfg) -> str:
     return f"（没有找到提醒 {rid}）"
 
 
-async def list_reminders(args: dict, cfg) -> str:
+async def list_reminders(args: dict, cfg, ctx=None) -> str:
     """列出当前所有已设置的提醒（含 id，便于用户确认/取消）。"""
     rows = reminder_manager.list_text()
     if not rows:
@@ -367,6 +383,23 @@ TOOL_REGISTRY: dict[str, dict] = {
         "handler": list_reminders,
         "config_flag": "tool_reminder_enabled",
     },
+    "look_at_user": {
+        "description": (
+            "「看你一眼」：按需抓取正在和你对话的这个人的实时摄像头画面，返回一段对用户当下状态的描述"
+            "（情绪/表情、动作、穿着、与对话相关的环境信息）。\n"
+            "使用场景：用户主动让你看他/她（如『你看看我』『你看着我说』『你看我这样行吗』），"
+            "或你认为看一眼用户当前状态有助于回答（如情绪、是否在场、穿着、环境）。\n"
+            "注意：画面按需抓取即弃，不进对话历史；若用户未开启摄像头或未授权，会如实返回『看不到』，"
+            "不要强求或反复调用。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+        "handler": look_at_user,
+        "config_flag": "tool_look_at_user_enabled",
+    },
     # 以后新增工具：在这里加一个 entry，并在 agent_config.yaml 里加 tools.<name>.enabled
 }
 
@@ -418,13 +451,14 @@ def _assistant_turn(resp, tool_calls) -> dict:
     }
 
 
-async def run_tool_loop(agent_messages: list, tools: list[dict], cfg) -> str | None:
+async def run_tool_loop(agent_messages: list, tools: list[dict], cfg, ctx: ToolContext | None = None) -> str | None:
     """
     while 工具循环：把模型可能打出的 tool_calls 解析成一句最终文本答案。
 
     :param agent_messages: 已含 system + 历史 + 当前 user 消息的上下文
     :param tools: OpenAI function calling 的 tools 列表（由 build_tools 生成）
     :param cfg: AgentConfig（提供 tool_max_rounds 与各工具参数）
+    :param ctx: 可选 ToolContext（如 session_id），透传给各工具 handler（handler 统一签名带 ctx=None）
     :return: 模型最终文本答案；循环触顶返回 None（不伪造回复，交给调用方说辞）
     """
     from infra_ai import async_call_llm_with_tools
@@ -458,7 +492,7 @@ async def run_tool_loop(agent_messages: list, tools: list[dict], cfg) -> str | N
                     ok, err = True, None
                 else:
                     try:
-                        result = await handler(args, cfg) or "（工具无输出）"
+                        result = await handler(args, cfg, ctx=ctx) or "（工具无输出）"
                         ok, err = True, None
                     except Exception as e:  # noqa: BLE001 - 单个工具失败不中断循环
                         logger.exception("tool %s handler failed: %s", tool_name, e)

@@ -47,3 +47,7 @@ tools:
     enabled: true      # true→支持「X分钟后提醒我Y」/「每天上午9点提醒我Y」这类全局定时提醒
     store_path: "data/reminders.json"   # 持久化文件；留空用默认（相对项目根目录）
     max_delay_seconds: 604800           # 一次性延时上限：7 天（防误配超长延时）
+  look_at_user:
+    enabled: true      # true→数字人可用摄像头「看你一眼」（需浏览器开摄像头开关并授权）。
+                       # 后端用配置的 VLM（LLM_ROUTING.vision）描述画面；无帧则如实说「看不到」。
+                       # 隐私：按需抓一帧即弃，不进对话历史、不落盘。

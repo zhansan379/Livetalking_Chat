@@ -4,6 +4,8 @@
 ###############################################################################
 
 import asyncio
+import base64
+import json
 from aiohttp import web
 
 from utils.logger import logger
@@ -264,6 +266,55 @@ async def api_reminders_cancel(request):
         return json_error(str(e))
 
 
+# ─── 摄像头「看用户」WebSocket ─────────────────────────────────────────────
+# 浏览器开摄像头开关时连到 /api/camera/ws?session=<id>；服务端在数字人被
+# 触发 look_at_user 工具时推 {type:'capture_request'}，浏览器现场抓一帧回传
+# {type:'snapshot', data:'data:image/jpeg;base64,...'} → 交给 CameraService。
+def _extract_jpeg(data_url_or_b64: str) -> bytes | None:
+    """从 data URL 或纯 base64 中取出 JPEG 字节；非法返回 None。"""
+    s = (data_url_or_b64 or "").strip()
+    if not s:
+        return None
+    if "," in s:
+        _, _, s = s.partition(",")  # 剥掉 "data:image/jpeg;base64," 前缀
+    try:
+        raw = base64.b64decode(s, validate=False)
+    except Exception:  # noqa: BLE001 - 坏 base64 按非法帧丢弃
+        return None
+    return raw or None
+
+
+async def camera_websocket_handler(request):
+    """浏览器摄像头通道：按需接收一帧 JPEG，交给同 session 的 look_at_user 工具。"""
+    session_id = (request.query.get("session") or "").strip() or "0"
+    ws = web.WebSocketResponse(heartbeat=30)
+    await ws.prepare(request)
+    try:
+        from agent.camera import camera_service
+    except Exception as e:  # noqa: BLE001 - 依赖缺失时拒绝而非崩掉服务
+        logger.warning("[camera] camera_service 不可用: %s", e)
+        await ws.close()
+        return ws
+    camera_service.register(session_id, ws)
+    logger.info("[camera] WS 已连接 session=%s", session_id)
+    try:
+        async for msg in ws:
+            if msg.type == web.WSMsgType.TEXT:
+                try:
+                    data = json.loads(msg.data)
+                except json.JSONDecodeError:
+                    continue
+                if data.get("type") == "snapshot":
+                    jpeg = _extract_jpeg(data.get("data") or "")
+                    if jpeg:
+                        camera_service.deliver_frame(session_id, jpeg)
+            elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
+                break
+    finally:
+        camera_service.unregister(session_id, ws)
+    return ws
+
+
 # ─── 路由注册 ──────────────────────────────────────────────────────────────
 
 async def index(request):
@@ -289,6 +340,7 @@ def setup_routes(app):
     app.router.add_get("/api/admin/config", admin_config)
     app.router.add_get("/api/admin/sessions", admin_sessions)
     app.router.add_get('/sse', sse_handler)
+    app.router.add_get('/api/camera/ws', camera_websocket_handler)  # 摄像头「看用户」通道
 
     # ── 全局定时提醒管理 ──
     app.router.add_get('/api/reminders', api_reminders_list)

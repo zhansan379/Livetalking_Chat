@@ -123,7 +123,7 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str,
     """
     from agent import ChatAgent
     from agent.config import get_agent_config
-    from agent.tool_loop import build_tools, list_enabled_tools, run_tool_loop
+    from agent.tool_loop import ToolContext, build_tools, list_enabled_tools, run_tool_loop
     from agent.longterm import (
         extract_longterm_memory,
         inject_memory_block,
@@ -176,7 +176,8 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str,
     tr_fail = None
     try:
         if tools:
-            final = await run_tool_loop(messages, tools, cfg)
+            final = await run_tool_loop(messages, tools, cfg,
+                                        ctx=ToolContext(session_id=session_id))
             final = _sanitize(final) if final else final
             if final:
                 reply = final
