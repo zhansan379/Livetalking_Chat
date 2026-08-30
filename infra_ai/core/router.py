@@ -70,8 +70,8 @@ class ModelSelector:
         self._load()
 
     def _load(self):
-        """从 config 加载候选模型列表。"""
-        for capability in ("chat", "vision"):
+        """从 config 加载候选模型列表（遍历 routing 下全部能力，如 chat/vision/chat_tone 等）。"""
+        for capability in self._config:  # 不硬编码能力名，新增能力进配置即自动装载
             cap_cfg = self._config.get(capability, {})
             candidates_list = cap_cfg.get("candidates", [])
             candidates = []

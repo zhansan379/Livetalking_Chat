@@ -59,6 +59,102 @@ llm:
           api_key: ${DASHSCOPE_API_KEY}
           priority: 3
           enabled: true
+    chat_tone:
+      default_model: bailian-flash
+      candidates:
+        - id: bailian-flash
+          provider: bailian
+          model: ${BAILIAN_CHAT_MODEL_FLASH:-qwen3.8-flash}
+          base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+          api_key: ${DASHSCOPE_API_KEY}
+          priority: 1
+          enabled: true
+        - id: bailian-max
+          provider: bailian
+          model: ${BAILIAN_CHAT_MODEL_MAX:-qwen3.8-max}
+          base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+          api_key: ${DASHSCOPE_API_KEY}
+          priority: 2
+          enabled: true
+        - id: bailian-plus
+          provider: bailian
+          model: ${BAILIAN_CHAT_MODEL_PLUS:-qwen3.7-plus}
+          base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+          api_key: ${DASHSCOPE_API_KEY}
+          priority: 3
+          enabled: true
+    compress:
+      default_model: bailian-plus
+      candidates:
+        - id: bailian-plus
+          provider: bailian
+          model: ${BAILIAN_CHAT_MODEL_PLUS:-qwen3.7-plus}
+          base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+          api_key: ${DASHSCOPE_API_KEY}
+          priority: 1
+          enabled: true
+        - id: bailian-max
+          provider: bailian
+          model: ${BAILIAN_CHAT_MODEL_MAX:-qwen3.8-max}
+          base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+          api_key: ${DASHSCOPE_API_KEY}
+          priority: 2
+          enabled: true
+        - id: bailian-flash
+          provider: bailian
+          model: ${BAILIAN_CHAT_MODEL_FLASH:-qwen3.8-flash}
+          base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+          api_key: ${DASHSCOPE_API_KEY}
+          priority: 3
+          enabled: true
+    extract:
+      default_model: bailian-plus
+      candidates:
+        - id: bailian-plus
+          provider: bailian
+          model: ${BAILIAN_CHAT_MODEL_PLUS:-qwen3.7-plus}
+          base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+          api_key: ${DASHSCOPE_API_KEY}
+          priority: 1
+          enabled: true
+        - id: bailian-max
+          provider: bailian
+          model: ${BAILIAN_CHAT_MODEL_MAX:-qwen3.8-max}
+          base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+          api_key: ${DASHSCOPE_API_KEY}
+          priority: 2
+          enabled: true
+        - id: bailian-flash
+          provider: bailian
+          model: ${BAILIAN_CHAT_MODEL_FLASH:-qwen3.8-flash}
+          base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+          api_key: ${DASHSCOPE_API_KEY}
+          priority: 3
+          enabled: true
+    consolidate:
+      default_model: bailian-plus
+      candidates:
+        - id: bailian-plus
+          provider: bailian
+          model: ${BAILIAN_CHAT_MODEL_PLUS:-qwen3.7-plus}
+          base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+          api_key: ${DASHSCOPE_API_KEY}
+          priority: 1
+          enabled: true
+        - id: bailian-max
+          provider: bailian
+          model: ${BAILIAN_CHAT_MODEL_MAX:-qwen3.8-max}
+          base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+          api_key: ${DASHSCOPE_API_KEY}
+          priority: 2
+          enabled: true
+        - id: bailian-flash
+          provider: bailian
+          model: ${BAILIAN_CHAT_MODEL_FLASH:-qwen3.8-flash}
+          base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+          api_key: ${DASHSCOPE_API_KEY}
+          priority: 3
+          enabled: true
     vision:
       default_model: sf-vision
       candidates:

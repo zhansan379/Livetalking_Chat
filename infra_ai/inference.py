@@ -680,6 +680,8 @@ async def async_call_llm(
     extra: dict[str, Any] | None = None,
     model_name: str | None = None,
     model_kwargs: dict[str, Any] | None = None,
+    capability: str = "chat",
+    first_choice_id: str | None = None,
 ) -> str:
     """
     异步调用文本大模型，带多模型路由、熔断器、速率限制和自动重试。
@@ -689,6 +691,10 @@ async def async_call_llm(
     :param extra: 附加信息，失败时写入错误日志
     :param model_name: 指定模型名称（如 "Qwen/Qwen3.6-27B"），不传则使用默认路由
     :param model_kwargs: 透传给 create() 的厂商专有参数（如 reasoning_effort / extra_body）
+    :param capability: 路由能力名（"chat" | "vision" | "chat_tone" | "compress" | "extract" | "consolidate"）。
+        指定能力在 LLM_ROUTING.<capability> 下选候选；缺省 "chat"。
+        与 model_name 的关系：model_name 优先（显式单模型覆盖），否则按 capability 走路由池（含故障转移）。
+    :param first_choice_id: 首选模型候选 ID；缺省取该能力的 default_model。
     :return: 模型响应文本
     """
     # 如果指定了模型名称，创建临时模型实例
@@ -724,8 +730,9 @@ async def async_call_llm(
                 model_kwargs=model_kwargs,
             )
 
-        return await router.execute("chat", _call_with_target,
-                                     first_choice_id=_get_first_choice("chat"))
+        return await router.execute(capability, _call_with_target,
+                                     first_choice_id=(first_choice_id
+                                                       or _get_first_choice(capability)))
     except ImportError:
         # 路由模块不可用（异常安装态）→ 单模型回退。
         # 注意：router.execute 抛出的 RuntimeError（所有候选失败）不在此拦截，
@@ -760,6 +767,8 @@ async def async_call_llm_with_tools(
     extra: dict[str, Any] | None = None,
     model_name: str | None = None,
     model_kwargs: dict[str, Any] | None = None,
+    capability: str = "chat",
+    first_choice_id: str | None = None,
 ):
     """
     异步调用文本大模型（带原生工具调用），透传 OpenAI tools。
@@ -771,6 +780,8 @@ async def async_call_llm_with_tools(
     :param extra: 附加信息，失败时写入错误日志
     :param model_name: 指定模型名称，不传则使用默认路由
     :param model_kwargs: 透传给 create() 的厂商专有参数
+    :param capability: 路由能力名，缺省 "chat"；详见 async_call_llm。
+    :param first_choice_id: 首选模型候选 ID；缺省取该能力的 default_model。
     :return: 原生 message 对象（含 .content 和 .tool_calls 属性）
     """
     # 如果指定了模型名称，创建临时模型实例
@@ -807,8 +818,9 @@ async def async_call_llm_with_tools(
                 model_kwargs=model_kwargs,
             )
 
-        return await router.execute("chat", _call_with_target,
-                                     first_choice_id=_get_first_choice("chat"))
+        return await router.execute(capability, _call_with_target,
+                                     first_choice_id=(first_choice_id
+                                                       or _get_first_choice(capability)))
     except ImportError:
         pass  # 路由模块不可用 → 单模型回退（RuntimeError 向上抛出，见 async_call_llm）
 

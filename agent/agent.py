@@ -150,9 +150,10 @@ class ChatAgent:
             "use_json": False,
             "extra": {"kind": "compress"},
             "model_kwargs": {"max_tokens": cfg.max_summary_tokens},
+            "capability": "compress",
         }
         if cfg.summarize_model:
-            call_kwargs["model_name"] = cfg.summarize_model
+            call_kwargs["model_name"] = cfg.summarize_model  # 显式单模型覆盖，优先于能力路由
 
         with new_trace(self._session_id, kind="summary"):
             result = await async_call_llm(

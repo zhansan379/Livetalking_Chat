@@ -90,7 +90,7 @@ async def _probe_tone(agent, message: str) -> dict:
         from infra_ai import async_call_llm
         raw = await async_call_llm(
             [{"role": "user", "content": prompt}], use_json=True,
-            extra={"kind": "tone_probe"},
+            extra={"kind": "tone_probe"}, capability="chat_tone",
         )
         data = json.loads(raw)
         if not isinstance(data, dict):

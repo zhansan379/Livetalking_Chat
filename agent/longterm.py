@@ -468,8 +468,9 @@ async def _call_extract(user_msg: str, reply: str, cfg, context: str = "") -> li
         ],
         use_json=True,
         extra={"kind": "longterm_extract"},
-        model_name=cfg.longterm_extract_model,
+        model_name=cfg.longterm_extract_model,  # 显式单模型覆盖，优先于能力路由
         model_kwargs={"max_tokens": 1024},
+        capability="extract",
     )
     arr = _extract_json_array(raw or "")
     out = []
@@ -596,6 +597,7 @@ async def _call_consolidate(records: list[MemoryRecord]) -> list[MemoryRecord]:
         use_json=True,
         extra={"kind": "longterm_merge"},
         model_kwargs={"max_tokens": 4096},
+        capability="consolidate",
     )
     arr = _extract_json_array(raw or "")
     out = []

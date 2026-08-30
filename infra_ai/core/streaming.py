@@ -86,11 +86,11 @@ async def _stream_single_model(
     t0 = time.monotonic()
     full_response = ""
     usage_meta: dict | None = None
-    stats = _text_stats if label in ("text", "chat") else _vision_stats
+    stats = _vision_stats if label == "vision" else _text_stats
     t0 = time.monotonic()
     full_response = ""
     usage_meta: dict | None = None
-    stats = _text_stats if label in ("text", "chat") else _vision_stats
+    stats = _vision_stats if label == "vision" else _text_stats
     succeeded = True
     try:
         async for chunk in model.astream(messages):
@@ -178,6 +178,7 @@ async def async_stream_call_llm(
     use_json: bool = False,
     *,
     purpose: str | None = None,
+    capability: str = "chat",
 ) -> "AsyncIterator[str]":
     """
     流式调用文本 LLM，逐个 token yield。支持多模型故障转移。
@@ -187,6 +188,8 @@ async def async_stream_call_llm(
 
     :param messages: 消息列表
     :param use_json: 是否绑定 JSON 输出（流式通常为 False）
+    :param purpose: 调用方标注的作用（如 chat_reply），写进 obs 观测
+    :param capability: 路由能力名，缺省 "chat"；流式目前仅主对话使用，其余环节走非流式
     :yields: 每个 token 字符串
     """
     # 尝试多模型路由（仅当有多个候选才启用探活-回退，单候选走下方单模型回退）
@@ -196,20 +199,20 @@ async def async_stream_call_llm(
         from infra_ai.inference import _get_first_choice
 
         router = get_router()
-        first_choice_id = _get_first_choice("chat")
-        targets = router.selector.select("chat", first_choice_id=first_choice_id)
+        first_choice_id = _get_first_choice(capability)
+        targets = router.selector.select(capability, first_choice_id=first_choice_id)
         if len(targets) > 1:
 
             async def _produce(target, bridge):
                 try:
-                    async for token in _stream_single_model(target, messages, use_json, "chat", purpose):
+                    async for token in _stream_single_model(target, messages, use_json, capability, purpose):
                         bridge.on_token(token)
                     bridge.on_complete()
                 except Exception as e:
                     bridge.on_error(e)
 
             async for token in stream_with_fallback(
-                router.selector, "chat", _produce,
+                router.selector, capability, _produce,
                 first_choice_id=first_choice_id, timeout=60,
             ):
                 yield token
