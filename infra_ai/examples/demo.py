@@ -6,6 +6,8 @@ infra_ai 调用演示：覆盖各种常见调用场景。
 - 已配置 config.yaml 所需环境变量（如 SF_API_KEY / SF_BASE_URL），
   否则候选模型默认 enabled=false，调用会走到单模型回退或直接失败。
 
+  python -m infra_ai.examples.demo
+
 演示场景：
   1. 同步调用          call_llm / call_vlm（脚本 / FastAPI / Jupyter 均安全）
   2. 异步调用          async_call_llm
@@ -26,6 +28,13 @@ infra_ai 调用演示：覆盖各种常见调用场景。
 import asyncio
 import json
 import time
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# 加载项目根目录下 .env 里的 API Key（DASHSCOPE_API_KEY / SF_API_KEY 等）。
+# 直接跑本脚本时 app.py 的 load_dotenv() 并不会执行，密钥需要在此显式载入。
+load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 from infra_ai import (
     aclose_all_clients,
@@ -46,11 +55,11 @@ from infra_ai import (
 )
 
 # ---- 运行开关：把要跑的段落置 True ----
-RUN_SYNC = True
+RUN_SYNC = False
 RUN_ASYNC = False
 RUN_JSON = False
 RUN_MODEL_OVERRIDE = False
-RUN_TOOLS = False
+RUN_TOOLS = True
 RUN_VLM = False          # 需要可访问的图片，默认关
 RUN_STREAM = False
 RUN_BATCH = False

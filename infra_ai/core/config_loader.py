@@ -22,6 +22,20 @@ logger = __import__("logging").getLogger(__name__)
 
 _CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
 
+# 在解析配置里的 ${ENV} 占位符之前，确保项目根目录 .env 已加载。
+# 关键：config_loader 是先于任何 get_config() 被 import，而它一 import 就到这行。
+# 否则在 `python -m infra_ai...` 下，`infra_ai` 包会先于入口脚本里的
+# load_dotenv() 被 import，配置单例里的 API Key 就被缓存成空串——
+# 路由时只能兜底到 SF_API_KEY，把硅流 key 发给 DashScope 返回 401。
+# shell 里已显式 export 的变量优先，.env 只补缺（load_dotenv 默认不覆盖）。
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(_CONFIG_PATH.parent.parent / ".env")
+except Exception:
+    # dotenv 缺失或路径不可用时不阻塞，仍可用显式环境变量运行
+    pass
+
 
 # ------------------------------------------------------------------
 # 占位符解析

@@ -22,7 +22,7 @@ llm:
 
   routing:
     chat:
-      default_model: sf-chat
+      default_model: bailian-max
       candidates:
         - id: sf-chat
           provider: siliconflow
@@ -38,9 +38,23 @@ llm:
           api_key: ${SF_API_KEY}
           priority: 2
           enabled: false
-        - id: bailian-chat
+        - id: bailian-max
           provider: bailian
-          model: ${BAILIAN_CHAT_MODEL:-qwen-plus}
+          model: ${BAILIAN_CHAT_MODEL_MAX:-qwen3.8-max}
+          base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+          api_key: ${DASHSCOPE_API_KEY}
+          priority: 1
+          enabled: true
+        - id: bailian-flash
+          provider: bailian
+          model: ${BAILIAN_CHAT_MODEL_FLASH:-qwen3.8-flash}
+          base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+          api_key: ${DASHSCOPE_API_KEY}
+          priority: 2
+          enabled: true
+        - id: bailian-plus
+          provider: bailian
+          model: ${BAILIAN_CHAT_MODEL_PLUS:-qwen3.7-plus}
           base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
           api_key: ${DASHSCOPE_API_KEY}
           priority: 3
