@@ -6,11 +6,48 @@
 #  handler 只在调用方确实下发时执行，不做二次确认（确认交给人/模型侧）。
 ###############################################################################
 
+import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timedelta
 
 from utils.logger import logger
+
+
+# ── 排定关机状态记录 ─────────────────────────────────────────────────────
+# shutdown_pc 下发的关机是 Windows `shutdown /s /t N`，系统侧无回读手段，无法得知
+# 还剩多久、这次排的是绝对点还是相对缓冲。为支撑「查看已配置的关机任务」，把每次
+# 下发的元信息（目标时间 / 相对秒数 / 来源 action）落盘，供 action=status 回读。
+_SHUTDOWN_STATE_FILE = os.path.join("data", "shutdown_state.json")
+
+
+def _now_iso() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _load_shutdown_state() -> dict:
+    try:
+        with open(_SHUTDOWN_STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:  # noqa: BLE001 - 无文件或读坏一律视为无排定
+        return {}
+
+
+def _save_shutdown_state(state: dict) -> None:
+    # 原子写，避免并发读写坏文件；失败只告警，不影响关机本身。
+    tmp = f"{_SHUTDOWN_STATE_FILE}.{os.getpid()}.tmp"
+    try:
+        os.makedirs(os.path.dirname(_SHUTDOWN_STATE_FILE), exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, _SHUTDOWN_STATE_FILE)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("shutdown state save failed: %s", e)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def _parse_shutdown_at(text) -> datetime | None:
@@ -49,10 +86,29 @@ def _parse_shutdown_at(text) -> datetime | None:
 
 
 async def shutdown_pc(args: dict, cfg, ctx=None) -> str:
-    """关闭或取消当前电脑关机。action=shutdown（默认）关机；action=cancel 取消已排定的关机。"""
+    """关闭/取消/查看关机。action=shutdown（默认）关机；cancel 取消；status 查看已配置的关机任务。"""
     args = args or {}
     action = (args.get("action") or "shutdown").strip().lower()
     win = sys.platform.startswith("win")
+    if action == "status":
+        # 回读本 agent 记录的排定关机（系统 `shutdown /s` 无回读手段，只能查自己的落盘）
+        st = _load_shutdown_state()
+        if not st or not st.get("target"):
+            return "（当前没有已配置的关机任务。）"
+        kind = {"at": "绝对时间点", "delay": "相对缓冲"}.get(st.get("kind"), "立即")
+        line = f"（已配置关机：{kind}，目标 {st.get('target')}"
+        target = None
+        try:
+            target = datetime.strptime(st["target"], "%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            pass
+        if target:
+            left = (target - datetime.now()).total_seconds()
+            line += f"，约剩 {int(left)} 秒" if left > 0 else "，时间已到"
+        if st.get("at"):
+            line += f"，于 {st.get('at')} 下发"
+        line += "。如需取消可再说『取消关机』）"
+        return line
     if action == "cancel":
         # 取消已排定的关机：Windows shutdown /a；Linux/macOS shutdown -c
         cmd = ["shutdown", "/a"] if win else ["shutdown", "-c"]
@@ -64,6 +120,7 @@ async def shutdown_pc(args: dict, cfg, ctx=None) -> str:
         except subprocess.TimeoutExpired:
             return "（取消失败：取消指令下发超时）"
         if r.returncode == 0:
+            _save_shutdown_state({})  # 取消成功后清掉本地记录
             return "（已成功取消本次关机。）"
         msg = (r.stderr or r.stdout or "").strip()
         # 没有排定中的关机时，Windows 会返回错误，属正常，如实告知即可
@@ -100,6 +157,19 @@ async def shutdown_pc(args: dict, cfg, ctx=None) -> str:
         msg = (r.stderr or r.stdout or "").strip()
         logger.warning("shutdown_pc failed rc=%s: %s", r.returncode, msg)
         return f"（关机失败：{msg or '返回非零'}）"
+    # 记录本次排定，供 action=status 回读；立即关机也算，撞上即失效
+    if at:
+        when = at_dt.strftime("%Y-%m-%d %H:%M:%S")
+        _save_shutdown_state({"kind": "at", "target": when, "at": at})
+    elif delay:
+        _save_shutdown_state({
+            "kind": "delay",
+            "target": (datetime.now() + timedelta(seconds=delay)).strftime("%Y-%m-%d %H:%M:%S"),
+            "at": _now_iso(),
+        })
+    else:
+        _save_shutdown_state({"kind": "now", "target": _now_iso(), "at": _now_iso()})
+
     if delay:
         # Windows 无法简便回读剩余时间；给一句朝向的提示
         tip = "（如需取消，可再让我『取消关机』）" if win else ""
@@ -127,15 +197,17 @@ def _shutdown_tool_specs() -> list[dict]:
                 "换算成 HH:MM（当天已过则自动顺延到明天）或完整 YYYY-MM-DD HH:MM 填 at；不要预先把绝对时间"
                 "算成 delay_seconds，交给本工具换算。\n"
                 "取消关机：当用户明确表达反悔、想继续用时，action 填 cancel（其余参数忽略）。\n"
-                "调用后如实把结果（已发出关机指令 / 已取消 / 失败原因）告诉用户。"
+                "查看已配置的关机任务：当用户问『我排的关机啥时候』『现在有排关机吗』『看看关机任务』之类时，"
+                "action 填 status，回读上次下发的关机时间与剩余时长（只有经本工具下发过才会查到，清空/取消后为空）。\n"
+                "调用后如实把结果（已发出关机指令 / 已取消 / 已配置的具体时间 / 失败原因）告诉用户。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["shutdown", "cancel"],
-                        "description": "shutdown=关机（默认）；cancel=取消已排定的关机。",
+                        "enum": ["shutdown", "cancel", "status"],
+                        "description": "shutdown=关机（默认）；cancel=取消已排定的关机；status=查看已配置的关机任务。",
                     },
                     "delay_seconds": {
                         "type": "integer",
