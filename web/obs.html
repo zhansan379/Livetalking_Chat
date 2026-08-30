@@ -32,6 +32,8 @@
             --code-fg: #26364c;
             --shadow: 0 14px 40px -22px rgba(23, 51, 94, .28);
             --row-hover: rgba(13, 148, 136, .06);
+            --async-fg: #7c3aed;
+            --async-bg: rgba(124, 58, 237, .12);
             --empty-ico: #c5d1e1;
             --skeleton-a: rgba(15, 23, 42, .07);
             --skeleton-b: rgba(15, 23, 42, .13);
@@ -90,6 +92,8 @@
             --code-fg: #bcd2e8;
             --shadow: 0 14px 40px -18px rgba(0, 0, 0, .7);
             --row-hover: rgba(45, 212, 191, .05);
+            --async-fg: #a78bfa;
+            --async-bg: rgba(167, 139, 250, .15);
             --empty-ico: #33415a;
             --skeleton-a: rgba(148, 163, 184, .08);
             --skeleton-b: rgba(148, 163, 184, .16);
@@ -249,8 +253,18 @@
         .tl-icon.ok { color: var(--ok); }
         .tl-icon.warn { color: var(--accent-2); }
         .tl-icon.err { color: var(--danger); }
+        .tl-icon.asyncx { color: var(--async-fg); }
         .tl-icon svg { width: 100%; height: 100%; }
         .span-name { font-weight: 600; font-family: var(--mono); font-size: .82rem; }
+        /* 异步 span（并发语气探测等）：紫色徽标提示与主问答并发、不阻塞响 */
+        .async-badge {
+            display: inline-flex; align-items: center; gap: 3px;
+            margin-left: 7px; padding: 1px 7px; border-radius: 10px;
+            font-size: .66rem; font-weight: 700; letter-spacing: .4px;
+            color: var(--async-fg); background: var(--async-bg);
+            font-family: var(--mono); vertical-align: 1px; white-space: nowrap;
+        }
+        .async-badge svg { width: 10px; height: 10px; }
         .span-meta { color: var(--muted); font-size: .76rem; }
         .span-ms { font-weight: 700; color: var(--accent); margin-left: auto; white-space: nowrap; font-family: var(--mono); }
         .arrow-indicator { color: var(--disc-fg); transition: transform .15s; display: inline-flex; }
@@ -479,7 +493,8 @@ const IC = {
     chev:'<path d="m9 18 6-6-6-6"/>',
     dot:'<circle cx="12" cy="12" r="4"/>',
     sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
-    moon:'<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'
+    moon:'<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+    zap:'<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>'
 };
 function svg(paths, extra) {
     return '<svg class="' + (extra || '') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>';
@@ -824,9 +839,17 @@ function renderTimeline(evs) {
         else if (ev.type === 'llm_call') {
             key = 'bot';
             name = 'LLM ' + (ev.mode === 'stream' ? '流式' : '调用') + ' · ' + purposeLabel(ev.purpose);
-            meta = `${ev.model || ev.route || '?'} · 入${ev.input_tokens||0}/出${ev.output_tokens||0}tok` +
-                   (ev.has_tools ? ' · tools' : '') + (ev.success ? '' : ' · ' + (ev.fail_reason||'失败'));
             cls = ev.success ? '' : 'err';
+            // 异步 span（如语气探测）：紫色标识 + 「异步」徽标，注明与主问答并发不阻塞
+            if (ev.async) {
+                key = 'zap';
+                cls += ' asyncx';
+                name += '<span class="async-badge">' + svg(IC.zap) + '异步</span>';
+            }
+            meta = `${ev.model || ev.route || '?'} · 入${ev.input_tokens||0}/出${ev.output_tokens||0}tok` +
+                   (ev.has_tools ? ' · tools' : '') +
+                   (ev.async ? ' · 与主问答并发（不阻塞响应）' : '') +
+                   (ev.success ? '' : ' · ' + (ev.fail_reason||'失败'));
             // 完整输入上下文 + 返回数据（现在 llm_call 事件里都有，特别是面熟可展开）
             if (ev.messages || ev.output !== undefined) detailHtml = llmDetailHTML(ev);
         }

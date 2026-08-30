@@ -568,6 +568,7 @@ async def _invoke_with_retry(
                 "output_tokens": usage.get('output_tokens', 0),
                 "total_tokens": usage.get('total_tokens', 0),
                 "purpose": (extra or {}).get("kind"),   # 调用方标注的作用（tone_probe 等）
+                "async": bool((extra or {}).get("async")),  # 异步后台 span（并发，不计端到端主干）
                 "success": True,
                 "fail_reason": None,
                 "err_type": None,
@@ -647,6 +648,7 @@ async def _invoke_with_retry(
         "success": False,
         "fail_reason": fail_reason,
         "err_type": err_type.value,
+        "async": bool((extra or {}).get("async")),
         # 失败也要记录发了什么输入，便于复盘不起效的提示词
         "messages": serialize_for_obs(messages),
     })

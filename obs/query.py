@@ -78,6 +78,10 @@ def _pipeline_bounds(events: list[dict]) -> dict[str, dict]:
         tid = ev.get("trace_id")
         if not tid or tid not in chat_tids:
             continue
+        # 异步后台 span（如语气探测）：与主问答并发、不阻塞端到端主干，即使慢于
+        # trace_end 也不会把全链路 min/max/first_play 拉长，故从边界计算中排除。
+        if ev.get("async"):
+            continue
         ms = float(ev.get("ms", 0) or 0)
         lo = ms
         # asr_call 的 emit 时刻 = 推理结束；以 emit 时刻减推理耗时近似语料起点

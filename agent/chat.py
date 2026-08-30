@@ -90,7 +90,9 @@ async def _probe_tone(agent, message: str) -> dict:
         from infra_ai import async_call_llm
         raw = await async_call_llm(
             [{"role": "user", "content": prompt}], use_json=True,
-            extra={"kind": "tone_probe"}, capability="chat_tone",
+            # async=True：标记本调用为异步 span（与主问答并发，不阻塞响应主干），
+            # 供观测面板用独立配色标识、并按全链路统计口径排除。
+            extra={"kind": "tone_probe", "async": True}, capability="chat_tone",
         )
         data = json.loads(raw)
         if not isinstance(data, dict):
@@ -112,6 +114,21 @@ async def _probe_tone(agent, message: str) -> dict:
     except Exception:  # noqa: BLE001 - 语气探测失败不影响回复
         logger.exception("tone probe skipped")
         return {}
+
+
+async def _probe_tone_into(agent, message: str, datainfo: dict):
+    """并发版语气探测：先探测，再把结果填进共享 datainfo，供 TTS 线程随句读取。
+
+    作为 asyncio.create_task 后台运行，**不阻塞**主回答的 run_tool_loop/流式。
+    复用 _probe_tone 的容错（任何失败返回 {} 绝不抛），故本协程不会向主链路抛异常。
+    datainfo 是贯穿 put_msg_txt→TTS 工作线程的同一 dict 引用；只要在某句实际合成前
+    填好 datainfo["tts"]，该句即带上语气（尽力而为：tone 慢/失败时前句用全局默认）。
+    """
+    tone = await _probe_tone(agent, message)
+    if tone:
+        _tts = datainfo.setdefault("tts", {})
+        for _k, _v in tone.items():
+            _tts.setdefault(_k, _v)
 
 
 async def stream_llm_chat(avatar_session, session_id: str, message: str,
@@ -192,19 +209,19 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str,
     notify_reply_start(avatar_session)  # 新一轮回答开始，前端清空字幕后逐句追加
 
     # ── LLM 语气钩子（LLM 自动驱动的语气调整）────────────────────────────
-    # 仅 doubao TTS 且 doubao_tone.llm_tone 开启时生效：前置一次廉价语气探测，
-    # 把 LLM 判定的语气指令填进 datainfo['tts']（手动传入的键优先 setdefault），
-    # 让整段回复从第一句起就带上对应语气。任何失败静默，不影响正常回复。
+    # 仅 doubao TTS 且 doubao_tone.llm_tone 开启时生效：触发一次廉价语气探测，
+    # 把 LLM 判定的语气指令填进 datainfo['tts']（手动传入的键优先 setdefault）。
+    # 并发执行：以 asyncio.create_task 启动，后台随句把结果填进共享 datainfo，
+    # **不阻塞**下方主回答（run_tool_loop/流式）。任务内部已 try/except 兜底，绝不向
+    # 主链路抛异常；事件循环常驻，fire-and-forget 由 add_done_callback 兜底记录。
     try:
         _opt = getattr(avatar_session, "opt", None)
         _tone_cfg = getattr(_opt, "doubao_tone", None)
         if (_opt and getattr(_opt, "tts", "") == "doubao"
                 and isinstance(_tone_cfg, dict) and _tone_cfg.get("llm_tone")):
-            _tone = await _probe_tone(agent, message)
-            if _tone:
-                datainfo.setdefault("tts", {})
-                for _k, _v in _tone.items():
-                    datainfo["tts"].setdefault(_k, _v)
+            _tone_task = asyncio.create_task(_probe_tone_into(agent, message, datainfo))
+            _tone_task.add_done_callback(
+                lambda t: t.exception() if not t.cancelled() else None)
     except Exception as e:  # noqa: BLE001 - 语气钩子失败不影响回复
         logger.exception("llm tone hook exception: %s", e)
 
