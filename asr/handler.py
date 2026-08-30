@@ -12,6 +12,7 @@ ASR→LLM→TTS 全链路 trace（asr_call 的 span_id==parent_id==trace_id，�
 import asyncio
 import json
 import uuid
+from functools import partial
 
 import numpy as np
 from aiohttp import web
@@ -129,10 +130,14 @@ async def asr_websocket_handler(request):
                     loop = asyncio.get_event_loop()
                     pool = get_pool()
                     _t0 = __import__("time").perf_counter()
+                    # run_in_executor 只转发位置参数，关键字参数需用 partial 包进 callable
                     res = await loop.run_in_executor(
-                        None, pool.transcribe,
-                        audio_float32, sample_rate, use_itn,
-                        trace_id=utterance_tid, session_id=session_id,
+                        None,
+                        partial(
+                            pool.transcribe,
+                            audio_float32, sample_rate, use_itn,
+                            trace_id=utterance_tid, session_id=session_id,
+                        ),
                     )
                     elapsed_ms = (__import__("time").perf_counter() - _t0) * 1000
 
