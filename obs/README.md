@@ -133,10 +133,10 @@ is_enabled()              # env 开关
    成败/重试/截断），覆盖所有 TTS backend，新 provider 零埋点。`put_msg_txt` 打 `enqueued_ms`
    供 queue_ms；provider（如 edge）把咽下的失败/重试写 `self.last_tts` 富化。SSE `notify` 剔除
    `_obs` 前缀字段，避免内部元数据泄出。
-6. **ASR 下发回合 id（单条全链路 trace）** `server/asr_server.py::asr_websocket_handler`：
-   `is_speaking is True` 时服务端生成回合 `utterance_tid`；`is_speaking is False` 分支（await 推理后、
-   handler 协程内）用 `emit_explicit(asr_call, trace_id=utterance_tid, kind="asr")` 打点（不新建
-   独立 trace），并把 `trace_id` 塞进转录响应 JSON 随 `is_final` 一起下发给浏览器。
+6. **ASR 下发回合 id（单条全链路 trace）** `asr/handler.py::asr_websocket_handler`：
+   `is_speaking is True` 时服务端生成回合 `utterance_tid`；`is_speaking is False` 分支（await 推理后）
+   经 `asr/base.py::BaseASR._emit` 用 `emit_explicit(asr_call, trace_id=utterance_tid, kind="asr")`
+   打点（不新建独立 trace），并把 `trace_id` 塞进转录响应 JSON 随 `is_final` 一起下发给浏览器。
 7. **浏览器 echo + chat 复用** `web/avatar-chat.html`：`runTranscription` 把 `m.trace_id` 解析出来，
    `drainQueue → sendChat(text, trace_id)` 在 `/human` POST body 里带 `trace_id`。
    `server/routes.py::human` 读取并传 `stream_llm_chat(..., trace_id=...)`，后者

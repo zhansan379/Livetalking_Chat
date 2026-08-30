@@ -1,0 +1,51 @@
+# asr 独立配置（类比 infra_ai/config.yaml）。
+# 敏感/机器相关值用 ${ENV} 占位，支持 ${VAR:-default} 在环境变量缺失时回退默认。
+asr:
+  enabled: ${ASR_ENABLED:-true}   # 总开关（false 时 /api/asr 不挂）
+  sample_rate: 16000              # 前端 web/avatar-chat.html 按 16k mono PCM16 记录，勿改
+  min_audio_bytes: 640            # <20ms 视为短音频，直接回空（0.02s * 16000 * 2B）
+
+  circuit_breaker:                # 每候选轻量熔断：连续失败阈值 → OPEN → 冷却 → HALF_OPEN 探活
+    failure_threshold: 2
+    open_duration_sec: 30
+
+  routing:
+    default_engine: paraformer   # 首选（供日志/诊断；实际按 candidates 内 priority 序）
+    candidates:
+      - id: paraformer
+        engine: paraformer              # 阿里云百炼 DashScope 云端 ASR（首选）
+        enabled: true                   # 需环境变量 DASHSCOPE_API_KEY；缺失时该候选自动不参与
+        priority: 1
+        params:
+          model: paraformer-realtime-v2
+          format: pcm
+          api_url: ${DASHSCOPE_WS_URL:-}  # 可选专属域名，如 wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference
+          language_hints: [zh, en]        # 仅 paraformer-realtime-v2 生效
+          disfluency_removal_enabled: false
+          semantic_punctuation_enabled: false
+          max_sentence_silence: 800
+          multi_threshold_mode_enabled: false
+          punctuation_prediction_enabled: true
+          inverse_text_normalization_enabled: true   # ITN
+          vocabulary_id: ""                          # 热词ID（v2）
+          phrase_id: ""                              # 热词ID（v1）
+          heartbeat: false
+          chunk_bytes: 3200
+      - id: sensevoice
+        engine: sensevoice        # 对应 registry "stt" 槽注册名（备选，云端失败时回退本地）
+        enabled: true
+        priority: 2
+        params:                   # 引擎专属参数（引擎 DEFAULT 之上覆盖）
+          model: iic/SenseVoiceSmall
+          vad_model: fsmn-vad
+          max_single_segment_time: 30000
+          batch_size_s: 60
+          device: ${SENSEVOICE_DEVICE:-auto}   # auto → cuda:0 否则 cpu
+          trust_remote_code: true
+      - id: siliconflow
+        engine: siliconflow                  # 硅基流动云端 ASR（最后一层兜底）
+        enabled: true                        # 需 SF_API_KEY；且本开发机该域名被墙，需有外网/代理
+        priority: 3
+        params:
+          model: FunAudioLLM/SenseVoiceSmall # 或 TeleAI/TeleSpeechASR
+          request_timeout: 120

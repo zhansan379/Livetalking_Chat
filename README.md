@@ -155,13 +155,13 @@ server/                      # 后端核心
   ├─ session_manager.py      # 会话管理
   ├─ avatar_routes.py        # avatar 生成路由
   ├─ task_manager.py         # 后台任务管理
-  └─ asr_server.py           # 本地 ASR 端点
 web/                         # 前端
   ├─ avatar-chat.html        # 全屏语音对话页（默认首页）
   ├─ admin.html              # 管理后台
   └─ lib/                    # 本地化依赖（jquery/onnxruntime/vad/bootstrap）
 data/                        # 数字人形象、录制、自定义动作
 models/                      # 模型权重
+asr/                         # 本地 ASR（可扩展多引擎 + 候选池熔断回退）
 tts/ streamout/ utils/       # TTS、输出、工具模块
 ```
 

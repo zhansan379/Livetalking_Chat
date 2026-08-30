@@ -391,15 +391,10 @@ def setup_routes(app):
     # ── 通用文件上传（插口④：会话共享暂存区）──
     app.router.add_post('/api/files/upload', upload_file)
 
-    # ── Local ASR endpoint (SenseVoice/FunASR) ── Issue #604 ──
+    # ── ASR WebSocket endpoint — asr 包自注册（候选池启用态作 gate）──
     try:
-        from server.asr_server import asr_websocket_handler, is_funasr_available
-        if is_funasr_available():
-            app.router.add_get("/api/asr", asr_websocket_handler)
-            logger.info("[ASR] Local SenseVoice ASR endpoint enabled at /api/asr")
-        else:
-            logger.info("[ASR] funasr not installed — local ASR endpoint disabled "
-                        "(pip install funasr modelscope)")
+        from asr import setup_routes as _setup_asr
+        _setup_asr(app)
     except Exception as e:
         logger.warning(f"[ASR] Failed to register ASR endpoint: {e}")
 
