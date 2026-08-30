@@ -254,6 +254,22 @@
         .span-meta { color: var(--muted); font-size: .76rem; }
         .span-ms { font-weight: 700; color: var(--accent); margin-left: auto; white-space: nowrap; font-family: var(--mono); }
         .arrow-indicator { color: var(--disc-fg); transition: transform .15s; display: inline-flex; }
+        /* LLM 调用行可点击展开完整输入/返回 */
+        .span-line.clickable { cursor: pointer; }
+        .span-line.clickable:hover { background: var(--row-hover); }
+        .tl-detail {
+            margin: 4px 0 12px 32px; background: var(--card-solid);
+            border: 1px solid var(--border); border-radius: 8px;
+            padding: 10px 14px; font-family: var(--mono); font-size: .78rem;
+            overflow: auto; max-height: 380px;
+        }
+        .tl-detail h4 {
+            font-size: .72rem; color: var(--accent); text-transform: uppercase;
+            letter-spacing: .5px; margin: 10px 0 6px; font-family: var(--mono);
+        }
+        .tl-detail h4:first-child { margin-top: 0; }
+        .tl-detail pre { margin: 0; white-space: pre-wrap; word-break: break-word; color: var(--code-fg); }
+        .tl-hint { color: var(--muted); font-size: .74rem; margin: 0 0 4px; }
         .arrow-indicator svg { width: 16px; height: 16px; }
 
         .empty-state { text-align: center; padding: 30px 16px; color: var(--muted); }
@@ -755,6 +771,7 @@ function renderTimeline(evs) {
         let key = ICON[ev.type] || 'dot';
         let cls = '';
         let name = '', meta = '';
+        let detailHtml = '';   // 可展开的完整输入/返回详情（仅 llm_call 填充）
         if (ev.type === 'trace_start') { name = '请求开始'; meta = '工具模式: ' + (ev.tool_mode ? '开' : '关'); }
         else if (ev.type === 'trace_end') {
             key = 'check'; name = '请求结束';
@@ -767,6 +784,8 @@ function renderTimeline(evs) {
             meta = `${ev.model || ev.route || '?'} · 入${ev.input_tokens||0}/出${ev.output_tokens||0}tok` +
                    (ev.has_tools ? ' · tools' : '') + (ev.success ? '' : ' · ' + (ev.fail_reason||'失败'));
             cls = ev.success ? '' : 'err';
+            // 完整输入上下文 + 返回数据（现在 llm_call 事件里都有，特别是面熟可展开）
+            if (ev.messages || ev.output !== undefined) detailHtml = llmDetailHTML(ev);
         }
         else if (ev.type === 'tool_call') {
             key = 'wrench';
@@ -793,13 +812,38 @@ function renderTimeline(evs) {
             cls = ev.success ? '' : 'err';
         }
         const rowCls = r ? 'span-line round' : 'span-line';
-        lines.push(`<div class="${rowCls}"><span class="tl-icon ${cls}">${svg(IC[key] || IC.dot)}</span>
+        const clickable = detailHtml ? ' clickable' : '';
+        const seq = ev.seq != null ? ev.seq : 't' + (ev.trace_id || '') + '_' + (name || '');
+        lines.push(`<div class="${rowCls}${clickable}" data-tl-seq="${seq}"><span class="tl-icon ${cls}">${svg(IC[key] || IC.dot)}</span>
             <span class="span-name">${esc(name)}</span>
             <span class="span-meta">${meta}</span>
             ${ev.elapsed_ms != null ? `<span class="span-ms">${fmtMs(ev.elapsed_ms)}</span>` : ''}</div>`);
+        if (detailHtml) lines.push(`<div class="tl-detail" data-tl-seq="${seq}" style="display:none">${detailHtml}</div>`);
     }
     return lines.join('');
 }
+
+/* 把某次 LLM 调用的完整输入与返回渲染成可折叠详情（纯展示）。 */
+function llmDetailHTML(ev) {
+    let h = '';
+    if (ev.messages && ev.messages.length) {
+        h += '<h4>完整输入 messages</h4>';
+        h += '<pre>' + esc(JSON.stringify(ev.messages, null, 2)) + '</pre>';
+    }
+    if (ev.output !== undefined && ev.output !== null && ev.output !== '') {
+        h += '<h4>返回 output</h4>';
+        const out = (typeof ev.output === 'string') ? ev.output : JSON.stringify(ev.output, null, 2);
+        h += '<pre>' + esc(out) + '</pre>';
+    }
+    if (!h) return '<p class="tl-hint">未记录输入上下文/返回数据（旧事件）</p>';
+    return h;
+}
+
+/* 点击可展开的 LLM 调用行 → 显示完整输入/返回。 */
+$(document).on('click', '.span-line.clickable', function () {
+    const seq = $(this).data('tlSeq');
+    $(this).siblings('.tl-detail[data-tl-seq="' + seq + '"]').toggle();
+});
 
 /* ---------- 主题切换 ---------- */
 function applyTheme() {

@@ -73,7 +73,10 @@ is_enabled()              # env 开关
 类型专属字段：
 
 - `trace_start`: `{msg_preview, tool_mode}`
-- `llm_call`: `{route, model, mode:"nonstream|stream", use_json, has_tools, attempts, elapsed_ms, input/output/total_tokens, success, fail_reason, err_type}`
+- `llm_call`: `{route, model, mode:"nonstream|stream", use_json, has_tools, attempts, elapsed_ms, input/output/total_tokens, success, fail_reason, err_type, messages, output}`
+  —— 新增 **`messages`**：本次调用完整输入上下文（经 `infra_ai/core/messages_log.serialize_for_obs` 序列化，保文本/URL、剥 base64 图片体）；
+    **`output`**：返回数据（字符串；工具场景无 content 时为 tool_calls 名列表；失败事件无此字段）。面板据此展开看完整输入/返回。
+    > 体量提示：完整输入/返回会让 JSONL 变大，靠 `OBS_MAX_MB` 轮转兜底；不想要可在 `_invoke_with_retry`/`_stream_single_model` 的 emit 处去掉该对字段。
 - `tool_round`: `{round, n_tool_calls, answered}`
 - `tool_call`: `{round, tool, args(截断~200), result_snippet(截断~200), elapsed_ms, success, error}`
 - `tts_call`: `{provider, voice, rate, text(截断40), text_len, attempts, elapsed_ms(合成耗时), queue_ms(入队→开始), audio_ms(音频时长), success, fail_reason(exception/empty_audio/truncated/max_retries/barge_in), err_type, retried, truncated}` —— `kind="chat"`、`parent_id == 聊天 trace_id` 的**子事件**（挂在该请求下）
@@ -97,7 +100,7 @@ is_enabled()              # env 开关
 | `GET /api/obs/request/<trace_id>` | 该 trace 全部事件，按 seq 升序（供时间线展开）；chat trace 会含其下的 `tts_call` 子事件 |
 | `GET /api/obs/pipeline?session_id=&limit=` | 该会话的全链路 trace 组 `{session_id, traces:[{trace_id, kind:"asr&#124;chat", session_id, ts, success, events}]}`（ASR 与 chat 拼成整条链） |
 
-`window`（秒）过滤基于 `now_ms()` 的 monotonic 差值；`kind=="summary"` 的压缩 trace 一律不参与统计。
+`window`（秒）过滤基于 `now_ms()` 的 monotonic 差值；后台维护类 trace（`kind` ∈ `summary`/`longterm_extract`/`longterm_consolidate`/**`lab`**）一律不参与用户请求统计（`obs/query.py::_BACKGROUND_KINDS`）。`lab` 是 `scripts/prompt_lab.py --record` 的并发实验 trace。
 响应都走通用 `{code:0, msg:"ok", data:...}` /错误 `{code:-1, msg}` 约定。
 
 ## 配置（env 驱动，无 yaml 改动）
@@ -119,7 +122,8 @@ is_enabled()              # env 开关
    让它沿 `put_msg_txt` 传到 TTS 工作线程（线程拿不到 contextvars，靠它显式挂回本 trace）。
 2. **LLM 上报（自动）** `infra_ai/inference.py::_invoke_with_retry` 成功/失败块与
    `infra_ai/core/streaming.py::_stream_single_model` 的 `finally` 各 `emit_obs(llm_call)`，
-   自动带 attempts / fail_reason / err_type(`classify_error`)。
+   自动带 attempts / fail_reason / err_type(`classify_error`)；并带 **`messages` + `output`**
+   （经 `infra_ai/core/messages_log.serialize_for_obs` / `output_snippet`，见下节「完整输入/返回记录」）。
 3. **工具循环** `agent/tool_loop.py::run_tool_loop`：每轮 `async with round_span(idx)`，
    逐工具 `emit(tool_call)`（含计时）。obs 包不可用时优雅降级为 `_DummyRound`，不报错。
 4. **压缩摘要独立 trace** `agent/agent.py::_call_summarize`：`with new_trace(sid, kind="summary")`，
@@ -151,8 +155,20 @@ is_enabled()              # env 开关
   各阶段平均耗时柱状、TTS 成功率环图）。
 - 最近请求表格（含「全链路」耗时列），行点击展开调用 `/api/obs/request/<trace_id>` 渲染按序时间线
   （asr_call → 请求开始 → llm → tool_round / tts_call → 请求结束 徽章行，工具参数与结果截断展示并做 HTML 转义）。
+- **LLM 调用行可展开完整输入/返回**：时间线里带 `ev.messages`/`ev.output` 的 `llm_call` 行标为可点击（`.span-line.clickable`），
+  点击 toggle 一个 `.tl-detail` 快，由 `llmDetailHTML(ev)` 拼装：`messages`（`JSON.stringify(...,null,2)`）与 `output`（字符串原样/对象 JSON）各入 `<pre>`，
+  已做 HTML 转义防注入。旧事件无字段则不显示、无展开箭头（向后兼容）。
+  前端拼接点：`web/obs.html` 的 `renderTimeline()`（llm_call 分支 `:788`）+ `llmDetailHTML()`（`:827`）+ 行点击 handler（`:845`）。
 - **自动刷新为手动开启**：进入页面只拉一次；导航栏「自动刷新」按钮开启 5s 轮询，
   开启期间展开的 trace 面板保持展开并同步刷新内容（`renderRequests` 重建后对仍展开的 tid 重新 `loadTrace`）。
+
+## 完整输入/返回记录 与 命令行提示词测试
+
+- **记录**：`llm_call` 事件现在完整携带输入上下文（`messages`）与返回数据（`output`），面板可展开查看。
+  实现集中在 `infra_ai/core/messages_log.py`（共享序列化器）+ `inference.py` / `core/streaming.py` 的 emit 处。
+- **提示词测试/并发**：`scripts/prompt_lab.py` 基于观测数据取某次调用、改输入或并发跑多个变体。
+
+详细开发说明见 **`docs/OBS完整LLM输入输出与提示词测试.md`**（存储位置、数据流、接线点、CLI 用法、验证）。
 
 ## 验证
 

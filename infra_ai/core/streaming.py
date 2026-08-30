@@ -22,6 +22,7 @@ from infra_ai.inference import (
 )
 from infra_ai.core.stats import _extract_token_usage_from_text, _text_stats, _vision_stats
 from infra_ai.core.router import ModelTarget
+from infra_ai.core.messages_log import serialize_for_obs
 from infra_ai.obs_hook import emit_obs
 
 # 日志通道复用 inference 的 logger（infra_ai.inference），保持单一通道。
@@ -158,6 +159,9 @@ async def _stream_single_model(
             "success": succeeded,
             "fail_reason": None,
             "err_type": None,
+            # 完整输入上下文 + 流式返回全文（观测面板可查；剥 base64 图片体）
+            "messages": serialize_for_obs(messages),
+            "output": full_response,
         })
         rate_limiter.record_tokens(usage.get('total_tokens', 0))
         rate_limiter.observe(usage.get('total_tokens', 0), elapsed)

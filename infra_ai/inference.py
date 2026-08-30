@@ -20,6 +20,7 @@ from typing import Any
 from openai import AsyncOpenAI, OpenAI
 
 from infra_ai.core.config_loader import get_config as _get_config
+from infra_ai.core.messages_log import output_snippet, serialize_for_obs
 _cfg = _get_config()
 LLM_REQUEST_TIMEOUT = _cfg.LLM_REQUEST_TIMEOUT
 LLM_TIMEOUT_SCALE = _cfg.LLM_TIMEOUT_SCALE
@@ -360,32 +361,9 @@ def _messages_for_file_log(messages: list[dict[str, Any]]) -> list[dict[str, Any
     """
     序列化消息列表用于文件日志。
     保留完整文本和完整 URL，仅剥离 base64 图片数据（太大无意义）。
+    （委托共享序列化器，与 obs 事件记录的 messages 同口径。）
     """
-    result = []
-    for m in messages:
-        entry: dict[str, Any] = {"role": m.get("role", "?")}
-        content = m.get("content", "")
-        if isinstance(content, str):
-            entry["content"] = content  # 完整文本
-        elif isinstance(content, list):
-            parts: list[dict[str, Any]] = []
-            for item in content:
-                if item.get("type") == "text":
-                    parts.append({"type": "text", "text": item.get("text", "")})
-                elif item.get("type") == "image_url":
-                    raw_url = str(item.get("image_url", {}).get("url", ""))
-                    # 剥离 base64 数据体，仅保留前缀 + 长度
-                    if "base64," in raw_url:
-                        header, b64data = raw_url.split("base64,", 1)
-                        parts.append({
-                            "type": "image_url",
-                            "url": f"{header}base64,<{len(b64data)} chars>",
-                        })
-                    else:
-                        parts.append({"type": "image_url", "url": raw_url})
-            entry["content"] = parts
-        result.append(entry)
-    return result
+    return serialize_for_obs(messages)
 
 
 def _messages_preview_for_console(messages: list[dict[str, Any]]) -> str:
@@ -577,6 +555,7 @@ async def _invoke_with_retry(
             # 熔断器：标记成功（统一身份）
             get_health_store().mark_success(health_key)
 
+            message = response.choices[0].message
             emit_obs({
                 "type": "llm_call",
                 "mode": "nonstream",
@@ -592,9 +571,10 @@ async def _invoke_with_retry(
                 "success": True,
                 "fail_reason": None,
                 "err_type": None,
+                # 完整输入上下文 + 返回数据（观测面板可查；剥 base64 图片体）
+                "messages": serialize_for_obs(messages),
+                "output": output_snippet(message),
             })
-
-            message = response.choices[0].message
             # 有工具时返回完整 message（调用方需要 .tool_calls）
             if tools:
                 return message
@@ -667,6 +647,8 @@ async def _invoke_with_retry(
         "success": False,
         "fail_reason": fail_reason,
         "err_type": err_type.value,
+        # 失败也要记录发了什么输入，便于复盘不起效的提示词
+        "messages": serialize_for_obs(messages),
     })
     _write_error_log(
         label=label,

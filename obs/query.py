@@ -13,8 +13,9 @@ from .writer import iter_event_files
 _MAX_READ = 200_000
 
 # 后台维护类 trace：不参与用户请求统计/列表/时间线。新增后台任务
-# （如长期记忆提取/整理）需把 kind 纳入此处，否则会污染图表与指标。
-_BACKGROUND_KINDS = ("summary", "longterm_extract", "longterm_consolidate")
+# （如长期记忆提取/整理、prompt_lab 并发实验）需把 kind 纳入此处，
+# 否则会污染图表与指标。
+_BACKGROUND_KINDS = ("summary", "longterm_extract", "longterm_consolidate", "lab")
 
 
 def _read_events() -> list[dict]:
