@@ -69,18 +69,18 @@ llm:
           api_key: ${DASHSCOPE_API_KEY}
           priority: 1
           enabled: true
-        - id: bailian-max
-          provider: bailian
-          model: ${BAILIAN_CHAT_MODEL_MAX:-qwen3.8-max}
-          base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
-          api_key: ${DASHSCOPE_API_KEY}
+        - id: sf-deepseek-v4-flash
+          provider: siliconflow
+          model: ${SF_DEEPSEEK_MODEL:-deepseek-ai/DeepSeek-V4-Flash}
+          base_url: ${SF_BASE_URL:-https://api.siliconflow.cn/v1}
+          api_key: ${SF_API_KEY}
           priority: 2
           enabled: true
-        - id: bailian-plus
-          provider: bailian
-          model: ${BAILIAN_CHAT_MODEL_PLUS:-qwen3.7-plus}
-          base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
-          api_key: ${DASHSCOPE_API_KEY}
+        - id: sf-ling-flash-2.0
+          provider: siliconflow
+          model: ${SF_LING_MODEL:-inclusionAI/Ling-flash-2.0}
+          base_url: ${SF_BASE_URL:-https://api.siliconflow.cn/v1}
+          api_key: ${SF_API_KEY}
           priority: 3
           enabled: true
     compress:
