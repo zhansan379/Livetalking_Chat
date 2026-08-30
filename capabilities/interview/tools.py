@@ -8,6 +8,7 @@
 ###############################################################################
 
 import asyncio
+import os
 
 from utils.logger import logger
 
@@ -25,6 +26,21 @@ def _lock(sid: str) -> asyncio.Lock:
 def _read_files(ctx, args) -> tuple[str, str]:
     """可选：从通用工具读取会话内上传的简历/JD（resume_path/jd_path）。"""
     return (args or {}).get("resume_path"), (args or {}).get("jd_path")
+
+
+def _session_file_names(cfg, ctx) -> list[str]:
+    """本会话已上传的文件名列表（尽力而为；目录不存在/出错返回空，不阻塞）。
+
+    只用于「有没有文件、叫什么」，不做内容判断——避免把非简历文件误当简历带入。
+    """
+    try:
+        from agent.files import _session_dir
+        d = _session_dir(cfg, getattr(ctx, "session_id", None) if ctx else None)
+        if d and os.path.isdir(d):
+            return sorted(n for n in os.listdir(d) if os.path.isfile(os.path.join(d, n)))
+    except Exception as e:  # noqa: BLE001 - 列目录失败按无文件处理
+        logger.warning("interview list session files failed: %s", e)
+    return []
 
 
 async def _grab_text(ctx, paths: tuple) -> str:
@@ -59,6 +75,32 @@ async def _start(args, cfg, ctx=None):
     resume_path, jd_path = _read_files(ctx, args)
     resume_text = (args or {}).get("resume_text") or await _grab_text(ctx, (resume_path,))
     jd_text = (args or {}).get("jd_text") or await _grab_text(ctx, ("", jd_path))
+
+    # 有上传文件但用户没指明用哪份：不瞎猜哪份是简历。首次问一次（列出候选，
+    # 多份也都在），等用户点名或明说"不用"；问过仍未选则下次直接开通用场。
+    files = _session_file_names(cfg, ctx)
+    if not resume_text and files:
+        st_now = InterviewState(cfg, sid)
+        st_now.load()
+        if st_now.get("pending_resume"):
+            await st_now.save({"pending_resume": False})   # 已问过仍未选 → 通用场
+        else:
+            await st_now.save({"pending_resume": True})
+            names = "、".join(f"『{n}』" for n in files)
+            return (
+                f"我注意到你本会话上传了：{names}。"
+                "要结合哪一份作为简历或岗位要求来出题吗？直接说用哪份就行；"
+                "不用的话说『不用简历，直接来』，我用通用题库开一场。"
+            )
+    # 带简历入场或已表态 → 清掉可能遗留的澄清标记（不影响正常开场）
+    if resume_text or jd_text:
+        try:
+            st_now = InterviewState(cfg, sid)
+            st_now.load()
+            if st_now.get("pending_resume"):
+                await st_now.save({"pending_resume": False})
+        except Exception as e:  # noqa: BLE001 - 清标记失败不阻塞开场
+            logger.warning("interview clear pending_resume failed: %s", e)
 
     questions = await build_question_sheet(cfg, role, level, resume_text, jd_text)
     if not questions:

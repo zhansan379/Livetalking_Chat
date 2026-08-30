@@ -2,10 +2,11 @@
 #  能力协议基类 Capability —— 主循环对「能力」的全部感知都收敛到这个接口。
 #
 #  与 agent/tool_loop.TOOL_REGISTRY 的「工具」不同：能力是一个有状态、多轮、带
-#  persona/业务逻辑的「域」。它不对主循环暴露实现细节，只提供三个通用插口：
-#    - tools()           声明一批工具（schema+handler），由 hub 合并进 TOOL_REGISTRY；
-#    - active_tools(sid) 本轮该暴露的工具子集（按会话状态条件注入，s07 按需加载）；
-#    - system_block(sid) 注入 system prompt 的一段文本（能力目录 + 当前会话激活态）。
+#  persona/业务逻辑的「域」。它不对主循环暴露实现细节，只提供四个通用插口：
+#    - tools()            声明一批工具（schema+handler），由 hub 合并进 TOOL_REGISTRY；
+#    - active_tools(sid)  本轮该暴露的工具子集（按会话状态条件注入，s07 按需加载）；
+#    - system_block(sid)  注入 system prompt 的一段文本（能力目录 + 当前会话激活态）；
+#    - pre_entry(msg,sid) 可选：关键词命中时由规则强制拉起入口工具（确定性进入）。
 #
 #  能力不接触 avatar_session / TTS / obs —— 只返回文本、读写自己的持久化；
 #  TTS 由现有工具调用链、观测由 infra_ai 自动埋点负责（见计划 4·B）。
@@ -60,6 +61,16 @@ class Capability:
     def system_block(self, session_id: str, cfg: "AgentConfig") -> str:
         """注入 system prompt 的一段文本；未启用/无内容返回 ""。"""
         return ""
+
+    # ── 确定性入口钩子（可选）──────────────────────────────────────────────
+    def pre_entry(self, message: str, session_id: str) -> dict | None:
+        """命中本能力的关键词时返回 {"tool": <name>, "args": {...}}，由 hub + tool_loop
+        规则接管本轮（跳过模型的自觉调用）；否则返回 None。默认不接管（保持原行为）。
+
+        与 `tool 暴露`/`system_block` 正交：它决定「入口要不要由规则强制拉起」，而不是
+        每轮注入内容。具体能力（如 interview）按需覆盖。
+        """
+        return None
 
     # ── 会话结束清理（可选）───────────────────────────────────────────────
     def on_session_end(self, session_id: str) -> None:

@@ -58,8 +58,6 @@ tools:
 
 # ── 可插拔能力（下述默认值来自各能力 config_defaults()，此处可覆盖）──
 capabilities:
-  hello:
-    enabled: false     # 框架自检冒烟能力，默认关闭；验框架时可临时打开
   interview:
     enabled: true              # 模拟面试能力（模型驱动、state 制导、按态暴露工具）
     default_role: "前端"        # 缺省岗位方向
@@ -67,5 +65,7 @@ capabilities:
     max_questions: 5
     idle_timeout_s: 1800
     remember_policy: identity_only   # identity_only | full | none
-    bank_override: null               # null→内置 bank_data.yaml
+    bank_csv: null                    # 题库目录 CSV；null→data/question_bank.csv
+    essay_csv: null                   # 题目 CSV；null→data/question_essay.csv
+    index_dir: "data/capabilities/interview/chroma"  # chromadb 落盘目录
     recall_top_k: 8

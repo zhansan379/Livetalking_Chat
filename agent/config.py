@@ -179,8 +179,16 @@ class AgentConfig:
         return int(self.cap_param("interview", "recall_top_k", 8) or 8)
 
     @property
-    def interview_bank_override(self):
-        return self.cap_param("interview", "bank_override")
+    def interview_bank_csv(self):
+        return self.cap_param("interview", "bank_csv")
+
+    @property
+    def interview_essay_csv(self):
+        return self.cap_param("interview", "essay_csv")
+
+    @property
+    def interview_index_dir(self):
+        return self.cap_param("interview", "index_dir", "data/capabilities/interview/chroma")
 
     @property
     def interview_store_dir(self):

@@ -1,20 +1,18 @@
 ###############################################################################
-#  模拟面试 · 题目召回与个性化（两级检索 + 一次 LLM）
+#  模拟面试 · 题目召回与个性化（向量检索 + 一次 LLM）
 #
-#  ① filter（确定性过滤，bank.filter_bank，缩小候选池）
-#  ② rerank（复用 infra_ai.async_rerank，候选池 × 简历+JD+方向 → top-k）
-#  ③ LLM 个性化（只对 top-k 做一次 LLM：排序、按岗位润色、针对简历补 1-2 道现场追问）
+#  ① 向量检索（bank.search：chromadb 本地 onnx 模型，question_essay 题库 top-k）
+#  ② LLM 个性化（只对 top-k 做一次 LLM：排序、按岗位润色、针对简历补 1-2 道现场追问）
 #
-#  ①②把大题库压到 top-k，③只对 top-k 做一次 LLM——不把题库搬进上下文。
-#  无简历/JD 时走纯库题；任一环节失败降级到前一步结果，绝不空手而归。
+#  ①把 4.9 万题库压到 top-k，②只对 top-k 做一次 LLM——不把题库搬进上下文。
+#  无简历/JD 时走纯库题；向量检索失败降级返回空 → 由调用方兜底，绝不空手而归。
 ###############################################################################
 
 import json
-import asyncio
 
 from utils.logger import logger
 
-from capabilities.interview.bank import filter_bank
+from capabilities.interview.bank import search as bank_search
 
 
 def _recall_query(role: str | None, level: str | None,
@@ -28,38 +26,25 @@ def _recall_query(role: str | None, level: str | None,
     return "\n".join(parts)
 
 
-async def _rerank_topk(query: str, docs: list[str], top_n: int) -> list[int]:
-    """返回 docs 按 query 相关度排序后的下标列表（前 top_n）。"""
-    from infra_ai import async_rerank
-    try:
-        resp = await async_rerank(query, docs, top_n=top_n)
-        scored = sorted(resp.results, key=lambda r: r.index)
-        # results 为按相关度排序的命中；还原成在 docs 内的原下标
-        order = [r.index for r in sorted(resp.results, key=lambda r: r.relevance_score, reverse=True)]
-        return order
-    except Exception as e:  # noqa: BLE001 - rerank 失败退原始顺序
-        logger.warning("interview rerank failed, fallback to bank order: %s", e)
-        return list(range(len(docs)))
-
-
 async def _personalize(cfg, candidates: list[dict], resume_text: str | None,
                        jd_text: str | None, max_q: int) -> list[dict]:
     """③ LLM 个性化：对已排序 top-k 生成本场题单（排序+润色+简历追问）。"""
     seed = [
         {"id": q.get("id"), "text": q.get("text"), "category": q.get("category"),
-         "type": q.get("type"), "rubrics": q.get("rubrics") or {},
-         "followups": list(q.get("followups") or [])}
+         "type": q.get("type"), "answer": (q.get("answer") or "")[:400],
+         "rubrics": q.get("rubrics") or {}, "followups": list(q.get("followups") or [])}
         for q in candidates[:max(1, max_q + 2)]
     ]
     prompt_msgs = [
         {"role": "system", "content": (
-            "你是模拟面试的出题老师。给定候选题目池和（可选的）岗位要求/候选人简历，"
-            "产出一场【不超过 max_q 题】的面试题单。返回严格 JSON："
+            "你是模拟面试的出题老师。给定候选题目池（含每题参考答案）和（可选的）岗位要求/"
+            "候选人简历，产出一场【不超过 max_q 题】的面试题单。返回严格 JSON："
             "{\"questions\":[{\"id\":\"原id或新id\",\"text\":\"题目(可按岗位润色/结合简历生成)\","
             "\"category\":\"分类\",\"type\":\"technical或behavioral或situational\","
             "\"rubrics\":{\"理解\":\"...\",\"表达\":\"...\",\"逻辑\":\"...\",\"完整\":\"...\"},"
             "\"followups\":[\"...\"]}]}。"
-            "优先保留与岗位要求最相关的技术题；若无简历可只从池里选题；题目数不超过 "
+            "优先保留与岗位要求最相关的技术题；rubrics 可结合题目参考答案定评分锚点；"
+            "若无简历可只从池里选题；题目数不超过 "
             f"{max_q} 题。只输出 JSON。"
         )},
         {"role": "user", "content": (
@@ -100,24 +85,25 @@ async def _personalize(cfg, candidates: list[dict], resume_text: str | None,
 
 async def build_question_sheet(cfg, role: str | None, level: str | None,
                                resume_text: str | None, jd_text: str | None) -> list[dict]:
-    """组装本场题单（filter→rerank→个性化）。永不返回空表。"""
+    """组装本场题单（向量检索 → LLM 个性化）。永不返回空表。"""
     max_q = int(getattr(cfg, "interview_max_questions", 5) or 5)
     top_k = max(max_q, int(getattr(cfg, "interview_recall_top_k", 8) or 8))
 
-    pool = filter_bank(cfg, role, level)
+    query = _recall_query(role, level, resume_text, jd_text)
+    pool = bank_search(cfg, query, top_k)
     if not pool:
         return []
 
-    query = _recall_query(role, level, resume_text, jd_text)
-    docs = [
-        f"{q.get('category') or ''} {q.get('type') or ''}：{q.get('text') or ''}"
-        for q in pool
-    ]
-    order = await _rerank_topk(query, docs, top_n=min(top_k, len(docs)))
-    ranked = [pool[i] for i in order if 0 <= i < len(pool)] or pool
+    sheet = await _personalize(cfg, pool, resume_text, jd_text, max_q)
+    return sheet or _plain(pool[:max_q])
 
-    sheet = await _personalize(cfg, ranked, resume_text, jd_text, max_q)
-    return sheet or [
-        {k: q.get(k) for k in ("id", "text", "category", "type", "rubrics", "followups")}
-        for q in ranked[:max_q]
-    ]
+
+def _plain(qs: list[dict]) -> list[dict]:
+    """把 chromadb 记录摊成题单结构（type/rubrics/followups 缺失时 LLM 已兜底）。"""
+    out = []
+    for q in qs:
+        out.append({
+            "id": q.get("id"), "text": q.get("text"), "category": q.get("category"),
+            "type": "", "rubrics": {}, "followups": [],
+        })
+    return out

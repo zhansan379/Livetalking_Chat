@@ -42,8 +42,10 @@ accelerate
 librosa
 openai
 #websocket-client
-websockets==12.0
+websockets>=14   # doubao TTS 用 deprecated 别名仍可用；≥13.4 才能与 chromadb 并存
 dashscope
+# 模拟面试题库向量库（chromadb；本地 onnx 内置模型向量化，首建索引需联网下载一次模型）
+chromadb
 # web_search 依赖；lxml 需 <6（6.x 的 DLL 在本机 uv Python 上加载失败）
 ddgs
 lxml<6

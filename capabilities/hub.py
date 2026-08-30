@@ -1,11 +1,12 @@
 ###############################################################################
 #  能力中枢 hub：负载 + 注册 + 会话级工具暴露 + 系统提示注入 + 配置默认值。
 #
-#  主循环（chat.py / config.py）只认三个通用入口，不感知任何具体能力：
-#     - register_capability_tools()     插口③：把能力声明工具合并进 TOOL_REGISTRY
-#     - session_tools(session_id, cfg)  插口③：本轮按会话+状态暴露的工具名
-#     - capability_system_block(sid,cfg) 插口②：拼接能力目录/激活态到 system prompt
-#     - capability_config_defaults()     插口①：供 config.py 并入能力自带默认配置
+#  主循环（chat.py / config.py）只认四个通用入口，不感知任何具体能力：
+#     - register_capability_tools()       插口③：把能力声明工具合并进 TOOL_REGISTRY
+#     - session_tools(session_id, cfg)    插口③：本轮按会话+状态暴露的工具名
+#     - capability_system_block(sid,cfg)  插口②：拼接能力目录/激活态到 system prompt
+#     - capability_pre_entry(sid,msg,cfg) 插口④：关键词命中时由规则拉起能力入口工具
+#     - capability_config_defaults()      插口①：供 config.py 并入能力自带默认配置
 #
 #  hub 不 import 具体能力；用 pkgutil+importlib 反向发现（依赖反转）。任何单个能力
 #  加载失败仅告警、不影响其它能力与主流程（沿用全局 try/except 防御风格）。
@@ -116,6 +117,28 @@ def session_tools(session_id: str | None, cfg) -> list[str]:
             if getattr(cfg, flag or f"tool_{name}_enabled", False):
                 names.append(name)
     return names
+
+
+# ── 插口④：确定性入口接管（关键词命中时由规则拉起能力入口工具）──────────
+def capability_pre_entry(session_id: str | None, message: str, cfg) -> tuple[str, dict] | None:
+    """命中某启用能力的关键词 → 返回 (tool_name, args)，否则 None。
+
+    主循环（tool_loop）在进入模型循环前问这一次：若返回非 None，则由规则直接执行
+    该工具的 handler 并把其输出作为本轮回答（跳过模型自觉调用）。按 priority 降序
+    询问，第一个表示「接管」的能力胜出；单个能力失败只告警、不阻塞其它。
+    """
+    _discover()
+    for cap in sorted(_capabilities.values(), key=lambda c: -c.priority):
+        if not cap.enabled(cfg):
+            continue
+        try:
+            hit = cap.pre_entry(message or "", session_id or "")
+        except Exception as e:  # noqa: BLE001 - 单个能力接管失败不影响其它
+            logger.warning("capability %s pre_entry failed: %s", cap.name, e)
+            continue
+        if hit and hit.get("tool"):
+            return hit["tool"], hit.get("args") or {}
+    return None
 
 
 # ── 插口②：系统提示注入 ─────────────────────────────────────────────────────

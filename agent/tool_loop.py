@@ -4,7 +4,8 @@
 #  设计要点（与 agent/agent.py 的接口约定）：
 #  - 一个工具 = 一条注册表 entry，同时管住「schema（给模型引用）」和「handler（执行）」，
 #    避免两者不同步。新增工具只需加一个 entry + 在 agent_config.yaml 补 tools.<name>.*。
-#  - run_tool_loop 的唯一职责：把模型的 tool_calls 解析成一句最终文本答案。
+#  - run_tool_loop 的职责：能力关键词接管（capability_pre_entry，若命中）→ 模型的
+#    tool_calls 解析成一句最终文本答案。
 #    它不做「思考循环」——OpenAI/Qwen 函数调用里，模型想用工具时返回的是 tool_calls 而非答案，
 #    必须把执行结果以 {"role":"tool"} 回填再问一次，直到模型给出纯文本答案（对应 s01 的
 #    while stop_reason == "tool_use"）。
@@ -532,6 +533,48 @@ async def run_tool_loop(agent_messages: list, tools: list[dict], cfg, ctx: ToolC
     from infra_ai import async_call_llm_with_tools
 
     msgs = list(agent_messages)
+
+    # ── 确定性入口：命中能力关键词时由规则拉起，不等模型自觉调用 ─────────
+    # 让「说开始面试就真的进能力」，弥补模型自由发挥盖过能力的情况。取本轮最后一条
+    # user 消息做关键词判定；无会话上下文（如 reminder 的 schedule 执行）不触发。
+    sid = getattr(ctx, "session_id", None) if ctx else None
+    if sid:
+        user_text = next(
+            (m.get("content") or "" for m in reversed(msgs) if m.get("role") == "user"),
+            "",
+        )
+        try:
+            from capabilities.hub import capability_pre_entry  # 惰性：hub 依赖 tool_loop
+            _trigger = capability_pre_entry(sid, user_text, cfg)
+        except Exception as e:  # noqa: BLE001 - 接管判定失败退回模型自觉路径
+            logger.warning("capability_pre_entry failed, fallback to model: %s", e)
+            _trigger = None
+        if _trigger:
+            tool_name, args = _trigger
+            handler = TOOL_REGISTRY.get(tool_name, {}).get("handler")
+            if handler:
+                t0 = time.monotonic()
+                try:
+                    result = await handler(args, cfg, ctx=ctx) or "（工具无输出）"
+                    ok, err = True, None
+                except Exception as e:  # noqa: BLE001 - 接管工具失败按工具失败话术返回
+                    logger.exception("capability pre-entry tool %s failed: %s", tool_name, e)
+                    result = f"（工具 <{tool_name}> 执行失败：{e}）"
+                    ok, err = False, str(e)
+                emit({
+                    "type": "tool_call",
+                    "round": 0,
+                    "tool": tool_name,
+                    "args": _trunc(json.dumps(args, ensure_ascii=False), 200) if args else "{}",
+                    "result_snippet": _trunc(result, 200),
+                    "elapsed_ms": round((time.monotonic() - t0) * 1000, 1),
+                    "success": ok,
+                    "error": err,
+                })
+                logger.info("capability pre-entry tool=%s success=%s snippet=%s",
+                            tool_name, ok, _trunc(result, 120).replace("\n", " "))
+                return (result or "").strip()
+
     for idx in range(cfg.tool_max_rounds):
         async with round_span(idx) as rd:
             try:
