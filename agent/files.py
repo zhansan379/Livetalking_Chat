@@ -22,13 +22,29 @@ from utils.logger import logger
 # 会话 id 仅保留安全字符，杜绝把任意字符串拼进路径造成越权目录
 _SAFE_SID = re.compile(r"[^A-Za-z0-9_.\-]")
 
+# 文件名中必须清除的危险/不可读字符：控制字符、路径分隔符、Windows 保留非法字符。
+# 注意 _DANGEROUS 只删这些，中文等 Unicode 合法字符一律保留（不再压成 '_' 以免中文名被吞）。
+_DANGEROUS = re.compile(r'[\x00-\x1f\x7f\\/:*?"<>|]')
+
+# 文件名上限，防止超长导致路径/日志/模型复述出问题
+_MAX_NAME_LEN = 200
+
 
 def sanitize_name(name: str) -> str:
-    """把用户上传文件名归一化成可读稳定名：只取裸文件名，非安全字符连续串压成一个
-    '_' 并去首尾下划线/空白。避免中文/括号被逐个转成一大串 '_' 导致文件名无法复述。"""
-    base = os.path.basename((name or "").replace('\\', '/')).strip()
-    base = re.sub(r"[^A-Za-z0-9_.\-]+", "_", base).strip("_. \t")
-    return base.strip() or "file"
+    """把用户上传文件名归一化成可读稳定名：只取裸文件名，删掉路径/控制等危险字符。
+
+    中文等 Unicode 字符完整保留（此前会把整段中文压成一个 '_'，导致『冯雷霆-全栈.mp4』
+    被吞成『-.mp4』）。安全上：取 basename 杜绝目录前缀，_DANGEROUS 清掉分隔符与控制
+    字符，且结果不允许为 '.'/'..'，杜绝 os.path.join 路径穿越；本目录本身即为会话隔离。
+    """
+    base = (name or "").replace('\\', '/').rsplit('/', 1)[-1]
+    base = _DANGEROUS.sub("", base).strip()
+    if not base or base in (".", ".."):
+        return "file"
+    base = base.rstrip(". ")  # Windows 规则：文件名不得以点/空格结尾
+    if not base:
+        return "file"
+    return base[:_MAX_NAME_LEN]
 
 
 def _upload_dir(cfg) -> str:
