@@ -552,6 +552,8 @@ function renderStageStats(s) {
         { label: 'ASR 平均 RTF', value: (asr.avg_rtf || 0).toFixed(2) + 'x', sub: '实时率（<1 更快）', color: C_SKY, ico: 'gauge' },
         { label: 'TTS 句子', value: String(tts.calls || 0), sub: '合成句数', color: C_ORG, ico: 'msg' },
         { label: 'TTS 成功率', value: ((tts.success_rate || 0) * 100).toFixed(1) + '%', sub: '平均 ' + fmtMs(tts.avg_ms), color: C_OK, ico: 'check' },
+        { label: 'TTS 合成时长', value: fmtMs(tts.avg_audio_ms), sub: '平均 ' + fmtMs(tts.audio_ms) + ' 总', color: C_SKY, ico: 'timer' },
+        { label: 'TTS 端送达率', value: ((tts.end_serve_rate || 0) * 100).toFixed(1) + '%', sub: (tts.ends_served || 0) + '/' + (tts.calls || 0) + ' 句送抵', color: (tts.end_serve_rate >= 1) ? C_OK : C_ORG, ico: 'volume' },
         { label: 'TTS 重试', value: String(tts.retry_count || 0), sub: '含失败重试', color: C_ORG, ico: 'repeat' },
         { label: 'TTS 截断', value: String(tts.truncation_count || 0), sub: '断流/过短', color: C_ORG, ico: 'alert' },
     ];

@@ -109,6 +109,8 @@ def summary(window: int | None = None) -> dict:
     asr_rtfs: list[float] = []
     tts_calls = tts_ok = tts_retries = tts_trunc = 0
     tts_ms = 0.0
+    tts_audio_ms = 0.0          # 合成音频毫秒（层1：audio_ms 归位）
+    tts_ends_served = 0         # 端标记送达 WebRTC 次数（层2：tts_playback）
 
     _events = _read_events()
     _bounds = _pipeline_bounds(_events)  # 全链路耗时：跨 ASR/LLM/TTS 同 trace 聚合
@@ -176,10 +178,15 @@ def summary(window: int | None = None) -> dict:
             if ev.get("success"):
                 tts_ok += 1
             tts_ms += float(ev.get("elapsed_ms", 0) or 0)
+            tts_audio_ms += float(ev.get("audio_ms", 0) or 0)
             if ev.get("retried"):
                 tts_retries += 1
             if ev.get("truncated"):
                 tts_trunc += 1
+        elif t == "tts_playback":
+            # 端标记送达观测：每句 status:"end" 被 WebRTC 出队记一次；
+            # 合成成功后端标记未送达 → end_serve_rate<100%，定位「播一半」。
+            tts_ends_served += 1
 
     per_model_list: list[dict] = []
     for m in per_model.values():
@@ -226,6 +233,11 @@ def summary(window: int | None = None) -> dict:
             "calls": tts_calls,
             "success_rate": round(tts_ok / tts_calls, 4) if tts_calls else 0.0,
             "avg_ms": round(tts_ms / tts_calls, 1) if tts_calls else 0.0,
+            "audio_ms": round(tts_audio_ms, 1),                       # 合成音频总时长
+            "avg_audio_ms": round(tts_audio_ms / tts_calls, 1) if tts_calls else 0.0,
+            # 端送达率：端标记到 WebRTC 次数 / 合成句数；<100% 即有句子没送到浏览器前
+            "ends_served": tts_ends_served,
+            "end_serve_rate": round(tts_ends_served / tts_calls, 4) if tts_calls else 0.0,
             "retry_count": tts_retries,
             "truncation_count": tts_trunc,
         },

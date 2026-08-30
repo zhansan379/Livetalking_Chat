@@ -67,6 +67,7 @@ class DoubaoTTS(BaseTTS):
         # 每句话一个独立 WS 连接（简单可靠）；跨句复用连接留作后续优化。
         self._pending = np.array([], dtype=np.float32)  # 跨帧残余
         self._first = True                              # 是否首个分帧
+        self._audio_ms = 0.0            # 本句实际送入播放的音频毫秒（OBS 合成时长归位）
 
         if not self.api_key:
             logger.warning("DoubaoTTS(wss): DOUBAO_API_KEY 未设置，请设置环境变量")
@@ -94,6 +95,7 @@ class DoubaoTTS(BaseTTS):
         self._pending = np.array([], dtype=np.float32)
         self._first = True
         self._got_audio = False   # WS 会话内是否真的收到过音频字节（区分「静默失败」）
+        self._audio_ms = 0.0      # 本句音频累计时长，_consume_pcm 里累加
         try:
             # 合并 全局默认(config doubao_tone) + 每句覆盖(datainfo['tts']) → req_params
             req_params = self._build_req(speaker, resource_id, textevent)
@@ -103,7 +105,7 @@ class DoubaoTTS(BaseTTS):
             if self.state != State.RUNNING:
                 self.tts_fail("barge_in")
             elif self._got_audio:
-                self.tts_ok()
+                self.tts_ok(audio_ms=self._audio_ms)
             else:
                 self.tts_fail("no_audio")
         except Exception:  # noqa: BLE001 - 失败不吞栈，回退到结束标记
@@ -266,6 +268,7 @@ class DoubaoTTS(BaseTTS):
 
         total = stream.shape[0]
         idx = 0
+        served = 0  # 本帧实际送入播放的样本数（不足一 chunk 的残余不计入时长）
         while total - idx >= self.chunk and self.state == State.RUNNING:
             eventpoint = {}
             if self._first:
@@ -274,7 +277,11 @@ class DoubaoTTS(BaseTTS):
             eventpoint.update(**textevent)
             self.parent.put_audio_frame(stream[idx : idx + self.chunk], eventpoint)
             idx += self.chunk
+            served += self.chunk
 
+        # 归实际送入播放的时长（毫秒；打断停在此处则不累计后续部分）
+        if served and self.state == State.RUNNING:
+            self._audio_ms += (served / self.sample_rate) * 1000.0
         self._pending = stream[idx:]  # 不足一 chunk 的留到下次
 
     def _send_end(self, text, textevent):

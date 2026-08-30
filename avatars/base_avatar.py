@@ -256,6 +256,23 @@ class BaseAvatar:
             # 不把它写到发往浏览器的 SSE 事件。
             ep = {k: v for k, v in eventpoint.items() if not str(k).startswith("_")}
             logger.info("notify:%s", ep)
+            # 端标记送达观测：status=="end" 的零帧被 WebRTC recv 出队的此刻，obs 也补
+            # 一条 tts_playback，度量「合成了 vs 真送到浏览器前的边界」。_obs 在本
+            # eventpoint（_send_end 蹭来的 textevent）里，和 _run_tts_observed 同款跨
+            # 线程显式 ID 打回对应 trace，从而能和 tts_call 关联出端送达率。
+            if eventpoint.get('status') == 'end' and eventpoint.get('_obs'):
+                try:
+                    from obs import emit_explicit
+                    o = eventpoint['_obs']
+                    emit_explicit({
+                        "type": "tts_playback",
+                        "text": (ep.get('text') or "")[:40],
+                        "text_len": len(ep.get('text') or ""),
+                        "status": "end",
+                    }, trace_id=o.get("trace_id"), session_id=o.get("session_id"),
+                       parent_id=o.get("parent_id"), kind="chat")
+                except Exception:  # noqa: BLE001 - 观测缺失不影响播放
+                    pass
             self.send_msg(json.dumps(ep))
 
     def start_recording(self):

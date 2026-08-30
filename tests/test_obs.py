@@ -229,8 +229,86 @@ class ObsTest(unittest.TestCase):
         self.assertEqual(s["tts"]["calls"], 1)
         self.assertEqual(s["tts"]["success_rate"], 1.0)
         self.assertEqual(s["tts"]["avg_ms"], 120.0)
+        # 层1：audio_ms 归位——合成音频毫秒进聚合
+        self.assertEqual(s["tts"]["audio_ms"], 2600.0)
+        self.assertEqual(s["tts"]["avg_audio_ms"], 2600.0)
         # tts_call 是 chat 子事件：不新增 trace_end，聊天 trace 数不变
         self.assertEqual(s["traces"], 1)
+
+    def test_tts_end_serve_rate_partial(self):
+        # 层2：合成了但端标记没送抵 → success_rate 仍 100%，end_serve_rate 跌到 50%。
+        # 这正是「合成全成功、观众只听到一半」时 OBS 能看到的判别信号。
+        from obs import query, emit_explicit
+        tid = self._write_chat_trace()
+
+        for i, delivered in enumerate((True, False)):
+            emit_explicit({
+                "type": "tts_call", "provider": "edgetts",
+                "text": f"句子{i}", "text_len": 3, "attempts": 1,
+                "elapsed_ms": 100.0, "queue_ms": 5.0, "audio_ms": 2000.0,
+                "success": True, "fail_reason": None, "err_type": None,
+                "retried": False, "truncated": False,
+            }, trace_id=tid, session_id="s1", parent_id=tid, kind="chat")
+            if delivered:
+                emit_explicit({
+                    "type": "tts_playback", "text": f"句子{i}", "text_len": 3,
+                    "status": "end",
+                }, trace_id=tid, session_id="s1", parent_id=tid, kind="chat")
+
+        s = query.summary(window=None)
+        self.assertEqual(s["tts"]["calls"], 2)
+        self.assertEqual(s["tts"]["success_rate"], 1.0)   # 合成全成功
+        self.assertEqual(s["tts"]["ends_served"], 1)      # 但只有一句送抵
+        self.assertEqual(s["tts"]["end_serve_rate"], 0.5)
+
+    def test_tts_playback_is_chat_subevent(self):
+        # tts_playback 不新增聊天 trace，也不影响聊天统计
+        from obs import query, emit_explicit
+        tid = self._write_chat_trace()
+        emit_explicit({
+            "type": "tts_call", "provider": "edgetts", "text": "句子",
+            "text_len": 2, "attempts": 1, "elapsed_ms": 100.0, "queue_ms": 5.0,
+            "audio_ms": 2000.0, "success": True, "fail_reason": None,
+            "err_type": None, "retried": False, "truncated": False,
+        }, trace_id=tid, session_id="s1", parent_id=tid, kind="chat")
+        emit_explicit({
+            "type": "tts_playback", "text": "句子", "text_len": 2, "status": "end",
+        }, trace_id=tid, session_id="s1", parent_id=tid, kind="chat")
+
+        s = query.summary(window=None)
+        self.assertEqual(s["traces"], 1)
+        self.assertEqual(s["tts"]["ends_served"], 1)
+        self.assertEqual(s["tts"]["end_serve_rate"], 1.0)  # 1 句合成 → 1 句送达
+
+    def test_doubao_audio_ms_accumulated(self):
+        # 层1源码侧：_consume_pcm 累加实际送入播放的样本 → _audio_ms 正确
+        import numpy as np
+        from types import SimpleNamespace
+        from tts.doubao import DoubaoTTS
+        from tts.base_tts import State
+
+        class _Parent:
+            def __init__(self):
+                self.frames = 0
+            def put_audio_frame(self, chunk, ep):
+                self.frames += 1
+
+        parent = _Parent()
+        opt = SimpleNamespace(fps=25, REF_FILE="v", tts="doubao")
+        t = DoubaoTTS(opt, parent)
+        t.state = State.RUNNING
+
+        # 5 个 uint16 chunk = 5×20ms = 100ms；payload 用非零样本（真实音频）
+        data = (np.zeros(t.chunk * 5, dtype=np.int16) + 1000).tobytes()
+        t._consume_pcm(data, "文本", {})
+        self.assertEqual(parent.frames, 5)
+        self.assertAlmostEqual(t._audio_ms, 100.0, delta=0.01)
+
+        # 再喂不足一 chunk 的残余：不该累计进时长、也不该按整帧发
+        t._consume_pcm((np.zeros(t.chunk // 2, dtype=np.int16) + 1000).tobytes(),
+                       "文本", {})
+        self.assertEqual(parent.frames, 5)             # 无新增整帧
+        self.assertAlmostEqual(t._audio_ms, 100.0, delta=0.01)
 
     def test_merged_single_trace_asr_llm_tts(self):
         # 全链路合并成一条 trace：ASR(asr_call) → chat(trace_start/llm_call/tts_call/trace_end)。
