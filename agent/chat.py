@@ -40,9 +40,12 @@ _SENTENCE_PUNCT = set(",.!;:，。！？：；")
 _TOOL_FAIL_FALLBACK = "我这次没查到足够的信息，换个问法试试好吗？"
 
 
-def _feed_talk(avatar_session, text: str, datainfo: dict):
+def _feed_talk(avatar_session, text: str, datainfo: dict, gen: int = 0):
     """把一段文本按标点切句、超过 10 字即推送给 TTS，末尾剩余部分补推。"""
     if not text:
+        return
+    # 代际自检：本回合已被新回合取代则立即停止喂料（避免前后两次回答叠读）
+    if gen and hasattr(avatar_session, 'is_stale') and avatar_session.is_stale(gen):
         return
     buf = ""
     lastpos = 0
@@ -113,7 +116,7 @@ async def _probe_tone(agent, message: str) -> dict:
 
 async def stream_llm_chat(avatar_session, session_id: str, message: str,
                           datainfo: dict = {}, trace_id: str | None = None,
-                          upload_note: str | None = None):
+                          upload_note: str | None = None, gen: int = 0):
     """基于 infra_ai + agent 记忆的问答：优先走工具循环，无启用工具时退回流式问答。
 
     - 使用 agent.ChatAgent 加载/保存完整转录，并把「历史摘要 + 最近几轮」拼进上下文；
@@ -144,6 +147,12 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str,
     except Exception as e:  # noqa: BLE001 - 记忆召回任何失败都不应阻断回复
         logger.exception("longterm recall inject exception: %s", e)
     agent.add_user_message(message)
+    # 任务 #7：用户消息立即落盘，即使本回合中途被打断/被取代也不丢失（旧回合并行
+    # save 会各自处理自己的增量；这里保证本回合用户输入立刻进入历史文件）。
+    try:
+        agent.save()
+    except Exception as e:  # noqa: BLE001 - 落盘失败不阻断回复
+        logger.exception("persist user message exception: %s", e)
 
     cfg = get_agent_config()
     # 插口②：把启用能力的目录 + 当前会话激活态片段注入 system prompt（只读；无内容则跳过）
@@ -207,12 +216,12 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str,
             final = _sanitize(final) if final else final
             if final:
                 reply = final
-                _feed_talk(avatar_session, final, datainfo)
+                _feed_talk(avatar_session, final, datainfo, gen)
             else:
                 logger.warning("tool loop returned None/empty after sanitize, use fallback phrase")
                 tr_success = False
                 tr_fail = "tool_loop_max_rounds"
-                _feed_talk(avatar_session, _TOOL_FAIL_FALLBACK, datainfo)
+                _feed_talk(avatar_session, _TOOL_FAIL_FALLBACK, datainfo, gen)
         else:
             # 无启用工具 → 保留原有流式逐字消费。缓冲区跨 token 累积，
             # 按标点切句、超过 10 字即推送，末尾剩余部分补推。
@@ -222,6 +231,12 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str,
             buf = ""
             try:
                 async for token in async_stream_call_llm(messages, purpose="chat_reply"):
+                    # 代际自检：本回合已被新回合取代 → 立即放弃，不再喂料/拼回复
+                    if gen and hasattr(avatar_session, 'is_stale') \
+                            and avatar_session.is_stale(gen):
+                        full_reply = []
+                        buf = ""
+                        break
                     if not token:
                         continue
                     full_reply.append(token)
@@ -232,19 +247,24 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str,
                             lastpos = i + 1
                             if len(buf) > 10:
                                 s = _sanitize(buf)
-                                if s:
+                                if s and not avatar_session.is_stale(gen):
                                     avatar_session.put_msg_txt(s, datainfo)
                                 buf = ""
                     buf += token[lastpos:]
                 if buf:
                     s = _sanitize(buf)
-                    if s:
+                    if s and not avatar_session.is_stale(gen):
                         avatar_session.put_msg_txt(s, datainfo)
                 reply = _sanitize("".join(full_reply)).strip()
             except Exception as e:
                 logger.exception("infra_ai chat exception: %s", e)
                 tr_success = False
                 tr_fail = "llm_error"
+
+        # 代际自检：本回合已被取代则整体放弃（不写 assistant、不落盘），
+        # 避免旧回合覆盖掉最新回合刚写入的历史。
+        if gen and hasattr(avatar_session, 'is_stale') and avatar_session.is_stale(gen):
+            reply = None
 
         if reply:
             agent.add_assistant_message(reply)
@@ -256,12 +276,16 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str,
             except Exception as e:  # noqa: BLE001
                 logger.exception("longterm extract trigger exception: %s", e)
 
-        # 完整转录先落盘，再后台异步压缩（不阻塞本次回复）
-        try:
-            agent.save()
-            if agent.should_compress():
-                asyncio.create_task(agent.compress_and_save())
-        except Exception as e:
-            logger.exception("agent save/compress trigger exception: %s", e)
+        # 完整转录先落盘，再后台异步压缩（不阻塞本次回复）。
+        # 代际自检：本回合已被取代则整体跳过落盘——否则旧回合会用它那份
+        # 不含新消息的内存历史覆盖掉新回合刚写入的磁盘，造成丢失更新。
+        if not (gen and hasattr(avatar_session, 'is_stale')
+                and avatar_session.is_stale(gen)):
+            try:
+                agent.save()
+                if agent.should_compress():
+                    asyncio.create_task(agent.compress_and_save())
+            except Exception as e:
+                logger.exception("agent save/compress trigger exception: %s", e)
     finally:
         _end_trace(tr_success, fail_reason=tr_fail, text_len=len(reply or ""))

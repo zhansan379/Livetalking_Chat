@@ -27,8 +27,12 @@ class BaseTTS:
 
         self.msgqueue = Queue()
         self.state = State.RUNNING
+        # 代际：每次 flush_talk 自增；入队项打上当前代际，process_tts 只处理
+        # 当前代际的项——打断后残留的旧代际项被丢弃，做到「真正停嘴」。
+        self._epoch = 0
 
     def flush_talk(self):
+        self._epoch += 1
         self.msgqueue.queue.clear()
         self.state = State.PAUSE
 
@@ -43,7 +47,7 @@ class BaseTTS:
                     datainfo.setdefault("_obs", {}).setdefault("enqueued_ms", round(now_ms(), 1))
             except Exception:  # noqa: BLE001 - 观测缺失不影响入队
                 pass
-            self.msgqueue.put((msg, datainfo))
+            self.msgqueue.put((msg, datainfo, self._epoch))
 
     def render(self, quit_event):
         process_thread = Thread(target=self.process_tts, args=(quit_event,))
@@ -52,10 +56,14 @@ class BaseTTS:
     def process_tts(self, quit_event):
         while not quit_event.is_set():
             try:
-                msg: tuple[str, dict] = self.msgqueue.get(block=True, timeout=1)
-                self.state = State.RUNNING
+                item: tuple = self.msgqueue.get(block=True, timeout=1)
             except queue.Empty:
                 continue
+            msg: tuple[str, dict] = (item[0], item[1])
+            # 代际自检：项属于被打断前的旧代际 → 直接丢弃，真正停嘴
+            if len(item) >= 3 and item[2] != self._epoch:
+                continue
+            self.state = State.RUNNING
             self._run_tts_observed(msg)
         self.stop_tts()
         logger.info('ttsreal thread stop')

@@ -48,11 +48,16 @@ async def human(request):
         elif params['type'] == 'chat':
             # 后台流式消费 infra_ai，避免阻塞 /human 响应（与旧 executor 语义一致）
             # trace_id：浏览器 echo 的 ASR 回合 id → chat 段复用，拼成一条全链路 trace
-            asyncio.create_task(
+            # 代际：新回合 begin_chat 升位，取消上一个回合任务，旧回合在 chat.py 内
+            # 用 is_stale 自检放弃喂料/落盘，避免并发回合互相覆盖历史与叠读。
+            gen = avatar_session.begin_chat()
+            task = asyncio.create_task(
                 stream_llm_chat(avatar_session, sessionid, params['text'], datainfo,
                                 trace_id=params.get('trace_id'),
-                                upload_note=params.get('upload_note'))
+                                upload_note=params.get('upload_note'),
+                                gen=gen)
             )
+            avatar_session.attach_task(gen, task)
 
         return json_ok()
     except Exception as e:

@@ -67,6 +67,13 @@ class BaseAvatar:
         self.chunk = self.sample_rate // (opt.fps*2) # 320 samples per chunk (20ms)
         self.sessionid = self.opt.sessionid
 
+        # ── 会话级对话代际（并发安全）─────────────────────────────────
+        # 每次新用户回合 +1（begin_chat）；旧回合在 TTS 喂料/落盘前用
+        # is_stale 自检：一旦被新回合取代，旧回合直接放弃输出，避免
+        # 「并发回合 → 历史覆盖丢失 + 前后两次回答叠读」。
+        self._chat_gen = 0
+        self._chat_task = None
+
         self.speaking = False
         self.recording = False
         self._record_video_pipe = None
@@ -187,7 +194,27 @@ class BaseAvatar:
             self.tts.flush_talk()
         if hasattr(self, 'asr') and hasattr(self.asr, 'flush_talk'):
             self.asr.flush_talk()
-        self.custom_audiotype = 0  
+        self.custom_audiotype = 0
+
+    # ── 会话级对话代际 ─────────────────────────────────────────────
+    def begin_chat(self) -> int:
+        """开启一个新回合，返回其代际 gen；同时记录上一个回合的任务以便取消。"""
+        self._chat_gen += 1
+        return self._chat_gen
+
+    def current_gen(self) -> int:
+        return self._chat_gen
+
+    def is_stale(self, gen: int) -> bool:
+        """该 gen 是否已被更新的回合取代；被取代的旧回合应停止喂料/落盘。"""
+        return gen < self._chat_gen
+
+    def attach_task(self, gen: int, task):
+        """记录最近一个回合的 asyncio task；取消上一个回合任务。"""
+        prev = self._chat_task
+        if prev and gen > 0 and not prev.done():
+            prev.cancel()
+        self._chat_task = task  
 
     # def flush(self):
     #     self.flush_talk()
