@@ -248,6 +248,49 @@ async def get_weather(args: dict, cfg, ctx=None) -> str:
         return f"（天气查询失败：{e}）"
 
 
+# ─── 面试题库向量检索（本地 chromadb 语义召回；通用只读工具）───────────────
+async def retrieve_questions(args: dict, cfg, ctx=None) -> str:
+    """对本地面试题库做语义向量检索，返回若干条『题干 + 分类 + 参考答案 + 关键词』。
+
+    题库存 data/capabilities/interview/chroma（本地 onnx 内置模型向量化）。纯只读：
+    不进入面试流程、不影响任何会话状态；即使面试能力未启用也能独立查题库。
+    """
+    query = (args or {}).get("query", "").strip()
+    if not query:
+        return "（检索关键词为空，请用自然描述想找的题目，如：『前端事件循环相关的题』）"
+    try:
+        top_k = int((args or {}).get("top_k", 0) or getattr(cfg, "question_search_top_k", 8) or 8)
+        top_k = max(1, min(top_k, 20))
+    except (TypeError, ValueError):
+        top_k = 8
+
+    def _run() -> list[dict]:
+        from capabilities.interview.bank import search as _bank_search  # 惰性：避开 import 环
+        return _bank_search(cfg, query, top_k)
+
+    try:
+        pool = await asyncio.to_thread(_run)
+    except Exception as e:  # noqa: BLE001 - 检索失败如实告知，不中断对话
+        logger.warning("question_search failed: %s", e)
+        return f"（题库检索失败：{e}）"
+    if not pool:
+        return "（题库检索没有命中任何题目，换个说法试试）"
+
+    lines = []
+    for i, q in enumerate(pool, 1):
+        title = (q.get("text") or "").strip()
+        cat = (q.get("category") or "").strip()
+        ans = (q.get("answer") or "").strip()
+        head = f"{i}. {title or '(无题干)'}" + (f"（{cat}）" if cat else "")
+        lines.append(head)
+        if ans:
+            lines.append(f"   参考答案：{ans[:300]}")
+        kw = (q.get("keywords") or "").strip()
+        if kw:
+            lines.append(f"   关键词：{kw[:100]}")
+    return "\n".join(lines)
+
+
 # ─── 全局定时提醒（一次性延时 / 每日 cron，跨 session、跨重启持久化）─────────
 def _schedule_at_time(time_str: str, content: str, task: str, cfg) -> str:
     """在今天的某个固定时钟时刻登记一次性提醒。
@@ -425,6 +468,23 @@ TOOL_REGISTRY: dict[str, dict] = {
         },
         "handler": list_reminders,
         "config_flag": "tool_reminder_enabled",
+    },
+    "question_search": {
+        "description": (
+            "对本地面试题库做语义向量检索，返回与描述最接近的若干条题目（题干、分类、参考答案、关键词）。"
+            "当用户想查某类面试题、复习某个考点、或要『从题库里找题』时调用；"
+            "也可在面试能力之外做知识查阅。纯只读，不影响任何会话状态。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "用自然语言描述要找的题目或考点，如『前端事件循环』『MySQL 索引优化』"},
+                "top_k": {"type": "integer", "description": "可选：返回条数，默认 8，最大 20"},
+            },
+            "required": ["query"],
+        },
+        "handler": retrieve_questions,
+        "config_flag": "tool_question_search_enabled",
     },
     "look_at_user": {
         "description": (

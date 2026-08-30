@@ -58,6 +58,10 @@ _DEFAULT = {
             "upload_dir": None,
             "read_max_chars": 12000,
         },
+        "question_search": {
+            "enabled": True,
+            "top_k": 8,
+        },
     },
     "capabilities": {},
 }
@@ -156,6 +160,10 @@ class AgentConfig:
         self.tool_files_enabled: bool = bool(w_files.get("enabled", True))
         self.file_upload_dir: str = str(w_files.get("upload_dir") or "data/uploads")
         self.file_read_max_chars: int = int(w_files.get("read_max_chars", 12000) or 12000)
+
+        w_qs = tools.get("question_search", {}) or {}
+        self.tool_question_search_enabled: bool = bool(w_qs.get("enabled", True))
+        self.question_search_top_k: int = int(w_qs.get("top_k", 8) or 8)
 
         # —— 可插拔能力配置（通用命名空间，非硬编码任何能力名）——
         # 值由 load_agent_config 用各能力 config_defaults() 拼默认、再叠用户覆盖。
