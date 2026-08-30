@@ -170,8 +170,11 @@ class DoubaoTTS(BaseTTS):
             "X-Control-Require-Usage-Tokens-Return": "*",
         }
 
+        # proxy=None：不走环境变量(ALL/HTTPS/HTTP_PROXY)自动代理 —— 火山 wss 直连可达，
+        # 而 websockets 走代理路径会用 Python 3.12 已移除的 create_connection(extra_headers=) 崩溃。
+        # 若日后必须走代理，改这里并升级兼容 3.12 的 websockets 版本。
         async with websockets.connect(
-            URL, extra_headers=headers, max_size=10 * 1024 * 1024
+            URL, extra_headers=headers, max_size=10 * 1024 * 1024, proxy=None
         ) as websocket:
             # 建连
             await proto.start_connection(websocket)
