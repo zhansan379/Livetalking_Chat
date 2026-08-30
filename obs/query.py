@@ -65,7 +65,9 @@ def _pipeline_bounds(events: list[dict]) -> dict[str, dict]:
         asr trace——它没有 chat trace_start，天然不会进入全链路耗时）。
       - 每 trace 的 min（首事件；asr_call 按其 emit 时刻减去推理耗时作为近似起点）
         与 max（末事件，可能是异步 TTS 合成完成，晚于 trace_end）。
-    返回 {tid: {"min": float, "max": float}}，供 summary/requests 拼 pipeline_ms。
+    返回 {tid: {"min": float, "max": float, "first_play": float|None}}，
+    first_play 为该 trace 最早一条 tts_playback 的 monotonic 时刻（可能有会话全程
+    都未送抵，此时为 None），供 requests 拼「ASR→首次送达」耗时。
     """
     chat_tids: set[str] = set()
     for ev in events:
@@ -84,6 +86,8 @@ def _pipeline_bounds(events: list[dict]) -> dict[str, dict]:
         b = bounds.setdefault(tid, {"min": None, "max": None})
         b["min"] = lo if b["min"] is None else min(b["min"], lo)
         b["max"] = max(b["max"] or 0.0, ms)
+        if ev.get("type") == "tts_playback":
+            b["first_play"] = ms if b.get("first_play") is None else min(b["first_play"], ms)
     for tid in bounds:
         if bounds[tid]["min"] is None:
             bounds[tid]["min"] = bounds[tid]["max"] or 0.0
@@ -270,8 +274,12 @@ def requests(limit: int | None = None) -> list[dict]:
         s, e = pair["start"], pair["end"]
         b = bounds.get(tid)
         pipeline_ms = None
+        first_speech_ms = None
         if b and b["min"] is not None:
             pipeline_ms = round(b["max"] - b["min"], 1)
+            # ASR 起始 → 首次送达：min 到最早 tts_playback；全程未送抵则为 None
+            if b.get("first_play") is not None:
+                first_speech_ms = round(max(b["first_play"] - b["min"], 0.0), 1)
         # 工具列：按实际调用顺序列出的工具名清单（不去重，同工具多次调用会重复出现）
         tools_names = pair.get("tools") or []
         tool_count = len(tools_names)
@@ -283,6 +291,7 @@ def requests(limit: int | None = None) -> list[dict]:
             "msg_preview": s.get("msg_preview") if s else "",
             "elapsed_ms": (e.get("elapsed_ms") if e else None),
             "pipeline_ms": pipeline_ms,   # 全链路：ASR 起始 → 最后一段 TTS 完成
+            "first_speech_ms": first_speech_ms,   # ASR 起始 → 语音首次送达浏览器
             "success": bool(e.get("success")) if e else None,
             "tool_rounds": (e.get("tool_rounds")) if e else None,
             "tools": tools_names,
