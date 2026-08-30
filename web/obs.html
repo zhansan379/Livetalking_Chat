@@ -543,9 +543,11 @@ function renderStats(s) {
 function renderStageStats(s) {
     const asr = s.asr || {}, tts = s.tts || {};
     const asrRate = (asr.success_rate * 100).toFixed(1) + '%';
+    const asrNonEmpty = Math.max((asr.calls || 0) - (asr.empty || 0), 0);
     const cells = [
         { label: 'ASR 调用', value: String(asr.calls || 0), sub: '语音识别次数', color: C_SKY, ico: 'mic' },
-        { label: 'ASR 成功率', value: asrRate, sub: (asr.calls || 0) + ' 次识别', color: C_OK, ico: 'check' },
+        { label: 'ASR 成功率', value: asrRate, sub: asrNonEmpty + ' 次非空识别', color: C_OK, ico: 'check' },
+        { label: 'ASR 空转写', value: String(asr.empty || 0), sub: 'VAD 误触/静音', color: C_ORG, ico: 'mic' },
         { label: 'ASR 平均推理', value: fmtMs(asr.avg_ms), sub: '总音频 ' + fmtMs(asr.total_audio_ms), color: C_SKY, ico: 'timer' },
         { label: 'ASR 平均 RTF', value: (asr.avg_rtf || 0).toFixed(2) + 'x', sub: '实时率（<1 更快）', color: C_SKY, ico: 'gauge' },
         { label: 'TTS 句子', value: String(tts.calls || 0), sub: '合成句数', color: C_ORG, ico: 'msg' },

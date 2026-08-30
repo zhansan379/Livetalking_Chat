@@ -189,7 +189,9 @@ class ObsTest(unittest.TestCase):
         self.assertEqual(s["success"], 1)
         # 但进入 asr 聚合
         self.assertEqual(s["asr"]["calls"], 2)
-        self.assertEqual(s["asr"]["success_rate"], 0.5)
+        # 新口径：空转写段(empty)单独计数，成功率按非空样本算 = 1/(2-1)
+        self.assertEqual(s["asr"]["success_rate"], 1.0)
+        self.assertEqual(s["asr"]["empty"], 1)
         self.assertEqual(s["asr"]["avg_ms"], 100.0)   # (200+0)/2
         self.assertEqual(s["asr"]["total_audio_ms"], 3000.0)
         self.assertGreater(s["asr"]["avg_rtf"], 0.0)

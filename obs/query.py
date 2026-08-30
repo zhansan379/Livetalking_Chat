@@ -104,7 +104,7 @@ def summary(window: int | None = None) -> dict:
     tool_counts: dict[str, int] = {}
 
     # ASR / TTS 独立聚合（不参与聊天统计）
-    asr_calls = asr_ok = 0
+    asr_calls = asr_ok = asr_empty = 0
     asr_ms = asr_audio = 0.0
     asr_rtfs: list[float] = []
     tts_calls = tts_ok = tts_retries = tts_trunc = 0
@@ -119,7 +119,9 @@ def summary(window: int | None = None) -> dict:
             # ASR 独立 trace：只喂 asr 聚合，不污染聊天统计
             if ev.get("type") == "asr_call":
                 asr_calls += 1
-                if ev.get("success"):
+                if ev.get("empty"):
+                    asr_empty += 1  # VAD 误触/静音段：转空字，单独计数，不进比率分母
+                elif ev.get("success"):
                     asr_ok += 1
                 asr_ms += float(ev.get("inference_ms", 0) or 0)
                 asr_audio += float(ev.get("audio_ms", 0) or 0)
@@ -213,7 +215,9 @@ def summary(window: int | None = None) -> dict:
         "tool_rounds": tool_rounds,
         "asr": {
             "calls": asr_calls,
-            "success_rate": round(asr_ok / asr_calls, 4) if asr_calls else 0.0,
+            # 成功率按「非空转写」样本算（空段是 VAD 误触，不当作识别失败）
+            "success_rate": round(asr_ok / max(asr_calls - asr_empty, 1), 4) if asr_calls else 0.0,
+            "empty": asr_empty,
             "avg_ms": round(asr_ms / asr_calls, 1) if asr_calls else 0.0,
             "total_audio_ms": round(asr_audio, 1),
             "avg_rtf": round(sum(asr_rtfs) / len(asr_rtfs), 4) if asr_rtfs else 0.0,
