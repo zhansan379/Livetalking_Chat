@@ -271,6 +271,41 @@
         .tl-detail pre { margin: 0; white-space: pre-wrap; word-break: break-word; color: var(--code-fg); }
         .tl-hint { color: var(--muted); font-size: .74rem; margin: 0 0 4px; }
         .arrow-indicator svg { width: 16px; height: 16px; }
+        /* 请求顶部「绑定工具」chip 条：能力按态注入后投递给本请求的工具子集 */
+        .bound-tools {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+            margin: 2px 0 10px 32px; padding: 7px 12px;
+            font-size: .74rem; background: var(--code-bg);
+            border: 1px solid var(--border); border-left: 2px solid var(--info); border-radius: 6px;
+        }
+        .bound-tools .bt-label {
+            display: inline-flex; align-items: center; gap: 5px;
+            font-weight: 700; letter-spacing: .4px; color: var(--info);
+            font-family: var(--mono); margin-right: 2px; white-space: nowrap;
+        }
+        .bound-tools .bt-label svg { width: 13px; height: 13px; }
+        .bound-tags { display: inline-flex; flex-wrap: wrap; gap: 5px; }
+        .bound-tools .bound-tag {
+            font-family: var(--mono); color: var(--chip-info-fg);
+            background: var(--chip-info-bg); padding: 2px 9px; border-radius: 12px;
+        }
+        /* ── 会话流 Modal（整轮对话视图） ── */
+        .session-link { color: var(--info); text-decoration: underline dotted; }
+        .session-link:hover { color: var(--accent); }
+        .session-trace { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 10px; overflow: hidden; }
+        .session-head { display: flex; align-items: center; gap: 12px; padding: 10px 14px; cursor: pointer; }
+        .session-head:hover { background: var(--row-hover); }
+        .sess-time { font-family: var(--mono); font-size: .76rem; color: var(--muted); white-space: nowrap; }
+        .sess-msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: .84rem; }
+        .sess-meta { font-family: var(--mono); font-size: .72rem; color: var(--muted); white-space: nowrap; }
+        .session-bound, .session-called {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+            padding: 2px 14px; font-size: .72rem;
+        }
+        .session-bound .bt-label, .session-called .bt-label { font-family: var(--mono); }
+        .session-called { padding-bottom: 10px; }
+        .session-detail { border-top: 1px solid var(--border); padding: 12px 14px; }
+        .session-detail .trace-detail { margin-top: 0; }
 
         .empty-state { text-align: center; padding: 30px 16px; color: var(--muted); }
         .empty-state svg { width: 34px; height: 34px; color: var(--empty-ico); margin-bottom: 10px; }
@@ -429,6 +464,23 @@
     </div>
 
     <div class="footer-hint"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="16" y2="12"/><line x1="12" x2="12.01" y1="8" y2="8"/></svg>接口：/api/obs/summary、/api/obs/requests、/api/obs/request/{trace_id}、/api/obs/pipeline</div>
+</div>
+
+<!-- ═══════ 会话流 Modal（整轮对话：按 session_id 聚合 trace，观测能力按态注入工具） ═══════ -->
+<div class="modal fade" id="sessionModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content" style="background:transparent;border:none">
+            <div class="glass-card" style="border-radius:14px">
+                <div class="card-header">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg>
+                    会话流 <span id="sessionTitle" class="text-muted small ms-2" style="font-family:var(--mono);font-weight:400"></span>
+                    <span class="refresh-spinner" id="sessionInfo">加载中</span>
+                    <button type="button" class="btn-close ms-auto" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="card-body" id="sessionBody"><div class="skeleton"></div></div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script src="lib/jquery-2.1.1.min.js"></script>
@@ -715,7 +767,7 @@ function renderRequests(requests) {
         html += `
         <tr class="request-row" data-tid="${r.trace_id}">
             <td style="white-space:nowrap">${fmtTime(r.ts)}</td>
-            <td style="white-space:nowrap" class="text-muted">${esc(String(r.session_id||'').slice(0,12))}</td>
+            <td style="white-space:nowrap"><a href="#" class="session-link" data-sid="${esc(r.session_id||'')}" title="查看整个会话流" onclick="event.stopPropagation();openSession(this.dataset.sid);return false;">${esc(String(r.session_id||'').slice(0,12))}</a></td>
             <td class="msg-preview" title="${esc(r.msg_preview||'')}">${esc(r.msg_preview||'')}</td>
             <td class="text-muted">${fmtMs(r.elapsed_ms)}</td>
             <td class="text-muted">${fmtMs(r.pipeline_ms)}</td>
@@ -776,7 +828,13 @@ function renderTimeline(evs) {
         let cls = '';
         let name = '', meta = '';
         let detailHtml = '';   // 可展开的完整输入/返回详情（仅 llm_call 填充）
-        if (ev.type === 'trace_start') { name = '请求开始'; meta = '工具模式: ' + (ev.tool_mode ? '开' : '关'); }
+        let boundChips = '';   // 本请求绑定的工具子集（能力按态注入后的名单，请求内恒定，顶部亮一次）
+        if (ev.type === 'trace_start') {
+            name = '请求开始'; meta = '工具模式: ' + (ev.tool_mode ? '开' : '关');
+            if (Array.isArray(ev.bound_tools) && ev.bound_tools.length) {
+                boundChips = ev.bound_tools.map(n => `<span class="bound-tag">${esc(n)}</span>`).join('');
+            }
+        }
         else if (ev.type === 'trace_end') {
             key = 'check'; name = '请求结束';
             cls = ev.fail_reason ? 'err' : 'ok';
@@ -823,6 +881,7 @@ function renderTimeline(evs) {
             <span class="span-meta">${meta}</span>
             ${ev.elapsed_ms != null ? `<span class="span-ms">${fmtMs(ev.elapsed_ms)}</span>` : ''}</div>`);
         if (detailHtml) lines.push(`<div class="tl-detail" data-tl-seq="${seq}" style="display:none">${detailHtml}</div>`);
+        if (boundChips) lines.push(`<div class="bound-tools" data-tl-seq="${seq}"><span class="bt-label">${svg(IC.wrench)}绑定工具</span>${boundChips}</div>`);
     }
     return lines.join('');
 }
@@ -847,6 +906,110 @@ function llmDetailHTML(ev) {
 $(document).on('click', '.span-line.clickable', function () {
     const seq = $(this).data('tlSeq');
     $(this).siblings('.tl-detail[data-tl-seq="' + seq + '"]').toggle();
+});
+
+/* ---------- 会话流（整轮对话视图） ----------
+ * 点「最近请求」里的 session_id 打开：按会话聚合该会话下所有 trace，
+ * 每条展示绑定工具子集（能力按态注入后投递给本请求的名单）+ 实际调用工具。
+ * 绑定集逐请求变化 ⇒ 直观看到能力注入随状态（idle→asking→finished）演进。
+ */
+let sessionExpanded = {};   // trace_id -> 是否展开
+let lastSessionTraces = []; // 当前会话流 trace 组
+
+function showSessionModal() {
+    const el = document.getElementById('sessionModal');
+    if (!window.__sessionModal) window.__sessionModal = new bootstrap.Modal(el);
+    window.__sessionModal.show();
+}
+
+async function openSession(sid) {
+    showSessionModal();
+    $('#sessionTitle').text(sid ? ('· ' + sid.slice(0, 12)) : '');
+    $('#sessionInfo').text('加载中');
+    $('#sessionBody').html('<div class="skeleton"></div>');
+    sessionExpanded = {};
+    try {
+        const j = await fetch('/api/obs/pipeline?session_id=' + encodeURIComponent(sid || '')).then(r => r.json());
+        lastSessionTraces = (j.data && j.data.traces) || [];
+        renderSession(lastSessionTraces);
+    } catch (e) {
+        $('#sessionBody').html('<div class="empty-state">' + svg(IC.alertTri) + '加载失败</div>');
+    }
+}
+
+/* 从 trace 组 events 里抽取 header 摘要：根 trace_start 的绑定集 + 实际调用的工具 */
+function summarizeTrace(g) {
+    const evs = g.events || [];
+    let start = null, end = null, called = [];
+    for (const ev of evs) {
+        if (!start && ev.type === 'trace_start') start = ev;
+        if (ev.type === 'trace_end') end = ev;
+        if (ev.type === 'tool_call') called.push(ev.tool);
+    }
+    if (!start) start = evs[0] || {};
+    return {
+        ts: g.ts || start.ts || '',
+        success: g.success,
+        msg: start.msg_preview || start.text || '（无消息预览）',
+        bound: Array.isArray(start.bound_tools) ? start.bound_tools : [],
+        called,
+        tool_rounds: end ? end.tool_rounds : null,
+        llm_calls: end ? end.llm_calls : null,
+    };
+}
+
+function renderSession(traces) {
+    if (!traces.length) {
+        $('#sessionBody').html('<div class="empty-state">' + svg(IC.msg) + '该会话暂无 trace</div>');
+        return;
+    }
+    $('#sessionInfo').text(traces.length + ' 条请求');
+    let html = '';
+    for (const g of traces) {
+        const t = summarizeTrace(g);
+        const ok = t.success === null ? 'pending' : (t.success ? 'ok' : 'fail');
+        const label = t.success === null ? '进行中' : (t.success ? '成功' : '失败');
+        const boundChips = t.bound.length
+            ? '<span class="bound-tags">' + t.bound.map(n => `<span class="bound-tag">${esc(n)}</span>`).join('') + '</span>'
+            : '<span class="text-muted">无工具</span>';
+        const calledChips = t.called.length ? t.called.map(esc).join(', ') : '<span class="text-muted">—</span>';
+        const exp = sessionExpanded[g.trace_id];
+        html += `
+        <div class="session-trace">
+            <div class="session-head" data-tid="${g.trace_id}">
+                <span class="sess-time">${fmtTime(t.ts)}</span>
+                <span class="badge-status status-${ok}">${label}</span>
+                <span class="sess-msg" title="${esc(t.msg)}">${esc(t.msg)}</span>
+                <span class="sess-meta">${t.llm_calls == null ? '—' : t.llm_calls + ' llm'}${t.tool_rounds == null ? '' : ' · ' + t.tool_rounds + '轮'}</span>
+                <span class="arrow-indicator" style="transform:${exp ? 'rotate(90deg)' : ''}">${svg(IC.chev)}</span>
+            </div>
+            <div class="session-bound"><span class="bt-label">${svg(IC.wrench)}绑定</span>${boundChips}</div>
+            <div class="session-called"><span class="bt-label">${svg(IC.hash)}调用</span>${calledChips}</div>
+            <div class="session-detail" data-tid="${g.trace_id}" style="display:${exp ? '' : 'none'}">${exp ? '<div class="trace-detail">加载中...</div>' : ''}</div>
+        </div>`;
+    }
+    $('#sessionBody').html(html);
+}
+
+function toggleSessionTrace(tid) {
+    sessionExpanded[tid] = !sessionExpanded[tid];
+    renderSession(lastSessionTraces || []);
+    if (sessionExpanded[tid]) loadSessionTrace(tid);
+}
+
+function loadSessionTrace(tid) {
+    fetch('/api/obs/request/' + tid).then(r => r.json()).then(j => {
+        const evs = (j.data && j.data.events) || [];
+        const html = renderTimeline(evs);
+        $('.session-detail[data-tid="' + tid + '"]').html(html
+            ? '<div class="trace-detail">' + html + '</div>'
+            : '<div class="empty-state">' + svg(IC.msg) + '无事件</div>');
+    }).catch(() => {});
+}
+
+$(document).on('click', '.session-head', function () {
+    const tid = $(this).data('tid');
+    toggleSessionTrace(tid);
 });
 
 /* ---------- 主题切换 ---------- */

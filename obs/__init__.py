@@ -39,9 +39,9 @@ def install() -> None:
 # ─── 请求级 trace ────────────────────────────────────────────────────────
 def begin_trace(session_id: str, msg_preview: str | None,
                 tool_mode: bool | None = None, kind: str = "chat",
-                trace_id: str | None = None):
+                trace_id: str | None = None, bound_tools: list[str] | None = None):
     return _get_tracer().begin_trace(session_id, msg_preview, tool_mode, kind,
-                                     trace_id=trace_id)
+                                     trace_id=trace_id, bound_tools=bound_tools)
 
 
 def end_trace(success: bool, fail_reason: str | None = None, text_len: int = 0,

@@ -119,11 +119,16 @@ class Tracer:
     # ─── 请求级 trace ──────────────────────────────────────────────────────
     def begin_trace(self, session_id: str, msg_preview: str | None,
                     tool_mode: bool | None = None, kind: str = "chat",
-                    trace_id: str | None = None) -> str | None:
+                    trace_id: str | None = None,
+                    bound_tools: list[str] | None = None) -> str | None:
         """开始一条请求级 trace。
 
         ``trace_id`` 可显式给入（例如 ASR 服务端下发的回合 id，供 chat 段复用，
         从而把 ASR→LLM/工具→TTS 拼进同一条 trace）；缺省则自旋一条。
+
+        ``bound_tools``：本请求投递给 LLM 的绑定理子集（能力按态注入后的名单）。
+        每次请求开头算一次（agent/chat.py → session_tools），请求内轮与轮间恒定，
+        故只在 trace_start 记一次。旧调用方不传则记为 []。
         """
         if not is_enabled():
             return None
@@ -142,6 +147,7 @@ class Tracer:
             "kind": kind,
             "msg_preview": msg_preview,
             "tool_mode": bool(tool_mode),
+            "bound_tools": bound_tools or [],
         })
         _PARENT_ID.set(trace_id)  # 之后的事件都挂到该 trace 下
         return trace_id

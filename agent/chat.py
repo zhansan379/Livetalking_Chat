@@ -178,11 +178,13 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str,
     except Exception as e:  # noqa: BLE001 - 提示注入失败不应阻断主问答
         logger.exception("upload_note inject exception: %s", e)
     # 插口③：按会话+状态条件暴露工具子集（能力工具仅进行中相关子集；全局工具照常）
-    tools = build_tools(session_tools(session_id, cfg))
+    # 名字先捕住，供 trace_start 记录"本请求绑定了哪些工具"（能力按态注入的名单）。
+    _tool_names = session_tools(session_id, cfg)
+    tools = build_tools(_tool_names)
     # trace_id：复用来自 ASR 服务端下发的回合 id（浏览器 echo），从而把
     # ASR→LLM/工具→TTS 拼成一条 trace；缺省则自旋一条（独立 trace，向后兼容）。
     _tid = _begin_trace(session_id, (message or "")[:200], tool_mode=bool(tools),
-                        trace_id=trace_id)
+                        trace_id=trace_id, bound_tools=_tool_names)
     # 把 trace 身份蹭进 datainfo：沿 put_msg_txt 传到 TTS 工作线程，
     # 供基类 process_tts 用 emit_explicit 显式挂回本聊天 trace（线程拿不到 contextvars）。
     if _tid:
