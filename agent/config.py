@@ -62,6 +62,10 @@ _DEFAULT = {
             "enabled": True,
             "top_k": 8,
         },
+        "shutdown_pc": {
+            # 破坏性工具，默认关闭：需要时在 yaml 里显式启用
+            "enabled": False,
+        },
     },
     "capabilities": {},
 }
@@ -164,6 +168,9 @@ class AgentConfig:
         w_qs = tools.get("question_search", {}) or {}
         self.tool_question_search_enabled: bool = bool(w_qs.get("enabled", True))
         self.question_search_top_k: int = int(w_qs.get("top_k", 8) or 8)
+
+        w_shutdown = tools.get("shutdown_pc", {}) or {}
+        self.tool_shutdown_pc_enabled: bool = bool(w_shutdown.get("enabled", False))
 
         # —— 可插拔能力配置（通用命名空间，非硬编码任何能力名）——
         # 值由 load_agent_config 用各能力 config_defaults() 拼默认、再叠用户覆盖。

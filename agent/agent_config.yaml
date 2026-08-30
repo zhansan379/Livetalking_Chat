@@ -60,6 +60,10 @@ tools:
   question_search:
     enabled: true      # true→模型可用 question_search 查本地面试题库
     top_k: 8           # 默认检索返回条数
+  # 系统关机（破坏性动作，默认关闭；需要时改为 true 后重启生效）
+  shutdown_pc:
+    enabled: true      # true→模型在用户明确表达关机意图时调用 shutdown_pc 关机
+    delay_max_seconds: 3600   # 延迟关机缓冲上限（秒）
 
 # ── 可插拔能力（下述默认值来自各能力 config_defaults()，此处可覆盖）──
 capabilities:

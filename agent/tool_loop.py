@@ -30,6 +30,9 @@ from agent.camera import look_at_user
 # 通用文件工具（list_files/read_file；与 web_search/weather 平级，非能力）
 from agent.files import _file_tool_specs as _file_tool_specs
 
+# 系统关机工具（shutdown_pc；与 web_search/files 平级，非能力）
+from agent.shutdown import _shutdown_tool_specs as _shutdown_tool_specs
+
 # 观测：随 obs 包可用与否优雅降级（观测失败不影响工具循环）
 try:
     from obs import emit, round_span
@@ -520,6 +523,11 @@ TOOL_REGISTRY: dict[str, dict] = {
     **{
         spec["name"]: {**spec, "config_flag": "tool_files_enabled"}
         for spec in _file_tool_specs()
+    },
+    # 系统关机工具（非能力）。只在用户明确表达关机意图时调用
+    **{
+        spec["name"]: {**spec, "config_flag": "tool_shutdown_pc_enabled"}
+        for spec in _shutdown_tool_specs()
     },
     # 以后新增工具：在这里加一个 entry，并在 agent_config.yaml 里加 tools.<name>.enabled
 }
