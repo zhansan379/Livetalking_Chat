@@ -27,11 +27,10 @@ class EdgeTTS(BaseTTS):
             logger.warning(f"edgetts {why} (attempt {attempt}/{max_try+1}): {text[:20]!r}")
 
         # 供基类 process_tts 统一埋点：把咽下的失败(barge-in/empty/truncated/max_retries)
-        # 与重试计数写进 last_tts；基类按它生成 tts_call 事件。
+        # 与重试计数登记给基类；基类按它生成 tts_call 事件。
         def _fail(fail_reason, attempts, truncated=False, audio_ms=0):
-            self.last_tts = {"success": False, "fail_reason": fail_reason,
-                             "attempts": attempts, "truncated": truncated,
-                             "retried": attempts > 1, "audio_ms": audio_ms}
+            self.tts_fail(fail_reason, attempts=attempts, truncated=truncated,
+                          retried=attempts > 1, audio_ms=audio_ms)
 
         stream = None
         retried = False      # 本句是否发生过任意类型的重试
@@ -100,9 +99,7 @@ class EdgeTTS(BaseTTS):
             return
 
         # 合成成功（可能经历过重试）
-        self.last_tts = {"success": True, "audio_ms": audio_ms,
-                         "attempts": attempt, "retried": retried,
-                         "truncated": False}
+        self.tts_ok(audio_ms=audio_ms, attempts=attempt, retried=retried)
 
         # ---- 播放音频 ----
         streamlen = stream.shape[0]

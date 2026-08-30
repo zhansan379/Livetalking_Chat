@@ -93,13 +93,22 @@ class DoubaoTTS(BaseTTS):
 
         self._pending = np.array([], dtype=np.float32)
         self._first = True
+        self._got_audio = False   # WS 会话内是否真的收到过音频字节（区分「静默失败」）
         try:
             # 合并 全局默认(config doubao_tone) + 每句覆盖(datainfo['tts']) → req_params
             req_params = self._build_req(speaker, resource_id, textevent)
             # 在 TTS 线程里驱动一个独立事件循环，跑完整 WS 会话
             asyncio.run(self._run_session(text, req_params, resource_id, msg))
+            # 会话正常走完但没出音（或被打断）也要如实登记，杜绝静默虚报成功
+            if self.state != State.RUNNING:
+                self.tts_fail("barge_in")
+            elif self._got_audio:
+                self.tts_ok()
+            else:
+                self.tts_fail("no_audio")
         except Exception:  # noqa: BLE001 - 失败不吞栈，回退到结束标记
             logger.exception("DoubaoTTS(wss) session failed")
+            self.tts_fail("session_failed")
         finally:
             self._send_end(text, textevent)
 
@@ -238,6 +247,8 @@ class DoubaoTTS(BaseTTS):
             # ── PCM 分帧 → parent (沿旧 doubao / omnitts 语义) ────────
 
     def _consume_pcm(self, chunk: bytes, text: str, textevent: dict):
+        # 只有真实音频才会进这里（payload 非空），据此判定「出过音」
+        self._got_audio = True
         # Raw PCM 16-bit → float32
         stream = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32767
 

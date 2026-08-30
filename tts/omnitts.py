@@ -183,6 +183,7 @@ class OmniTTS(BaseTTS):
                 if first:
                     eventpoint = {"status": "start", "text": text}
                     first = False
+                    self.tts_ok()   # 收到首个真实音频帧即登记成功；空流则交给基类记失败
                 eventpoint.update(**textevent)
                 self.parent.put_audio_frame(
                     stream[idx : idx + self.chunk], eventpoint

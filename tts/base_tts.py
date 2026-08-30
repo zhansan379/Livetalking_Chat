@@ -30,6 +30,24 @@ class BaseTTS:
         # 代际：每次 flush_talk 自增；入队项打上当前代际，process_tts 只处理
         # 当前代际的项——打断后残留的旧代际项被丢弃，做到「真正停嘴」。
         self._epoch = 0
+        # 单次合成的成败登记，由 tts_ok / tts_fail 填充，_run_tts_observed 消费。
+        # 子类只在自然分支点各调一行；未登记即按失败处理（见 _run_tts_observed）。
+        self.last_tts = None
+
+    # ── 结果登记：provider 在「成败分界」处任调其一，统一写入 last_tts ──
+    # 相比散落的手拼字典，这里收敛结构、并提供缺省语义（不调 = 未归类失败），
+    # 避免各 provider 因漏写而静默虚报 100% 成功率。
+
+    def tts_ok(self, audio_ms: float = 0, attempts: int = 1, retried: bool = False):
+        """登记本次合成成功（在确认合成出真实音频后调用一次）。"""
+        self.last_tts = {"success": True, "fail_reason": None, "audio_ms": audio_ms,
+                         "attempts": attempts, "retried": retried, "truncated": False}
+
+    def tts_fail(self, reason: str, attempts: int = 1, retried: bool = False,
+                 truncated: bool = False, audio_ms: float = 0):
+        """登记本次合成失败；reason 为可读原因（barge_in / exception / no_audio…）。"""
+        self.last_tts = {"success": False, "fail_reason": reason, "audio_ms": audio_ms,
+                         "attempts": attempts, "retried": retried, "truncated": truncated}
 
     def flush_talk(self):
         self._epoch += 1
@@ -80,13 +98,19 @@ class BaseTTS:
         _t0 = time.time()
         try:
             self.txt_to_audio(msg)
-            lt = getattr(self, "last_tts", None) or {}
-            ok   = lt.get("success", True)
-            fail = lt.get("fail_reason")
-            err  = lt.get("err_type")
-            audio, att, trun, retried = (
-                lt.get("audio_ms", 0), lt.get("attempts", 1),
-                lt.get("truncated", False), lt.get("retried", False))
+            lt = getattr(self, "last_tts", None)
+            if lt is None:
+                # provider 全程没登记结果 → 记作未归类失败。宁可高亮也别静默虚报 100%，
+                # 让漏登记 / 真正无音频的失败浮出来（对比旧逻辑缺省按成功）。
+                ok, fail, err = False, "unclassified", None
+                audio, att, trun, retried = 0, 1, False, False
+            else:
+                ok   = bool(lt.get("success", False))
+                fail = lt.get("fail_reason")
+                err  = lt.get("err_type")
+                audio, att, trun, retried = (
+                    lt.get("audio_ms", 0), lt.get("attempts", 1),
+                    lt.get("truncated", False), lt.get("retried", False))
         except Exception as e:  # noqa: BLE001 - 观测不吞 provider 异常，只记录
             ok, fail, err = False, "exception", e.__class__.__name__
             audio, att, trun, retried = 0, 1, False, False

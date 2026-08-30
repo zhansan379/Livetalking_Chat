@@ -65,4 +65,5 @@ class AzureTTS(BaseTTS):
 
             frame = (np.frombuffer(chunk, dtype=np.int16)
                        .astype(np.float32) / 32767.0)
+            self.tts_ok()   # 回调推到首个真实音频帧即登记成功
             self.parent.put_audio_frame(frame)

@@ -180,6 +180,7 @@ class QwenTTS(BaseTTS):
             if self._first_chunk:
                 eventpoint = {'status': 'start', 'text': self._current_text}
                 self._first_chunk = False
+                self.tts_ok()   # 回调推到首个真实音频帧即登记成功
             eventpoint.update(**self._current_textevent)
             self.parent.put_audio_frame(frame, eventpoint)
             idx += self.chunk
@@ -203,6 +204,7 @@ class QwenTTS(BaseTTS):
                 if self._first_chunk:
                     eventpoint = {'status': 'start', 'text': self._current_text}
                     self._first_chunk = False
+                    self.tts_ok()   # 回调推到首个真实音频帧即登记成功
                 eventpoint.update(**self._current_textevent)
                 self.parent.put_audio_frame(frame, eventpoint)
                 idx += self.chunk
