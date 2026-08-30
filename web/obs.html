@@ -840,13 +840,15 @@ function renderTimeline(evs) {
             key = 'bot';
             name = 'LLM ' + (ev.mode === 'stream' ? '流式' : '调用') + ' · ' + purposeLabel(ev.purpose);
             cls = ev.success ? '' : 'err';
-            // 异步 span（如语气探测）：紫色标识 + 「异步」徽标，注明与主问答并发不阻塞
+            meta = '';
+            // 异步 span（如语气探测）：紫色标识 + 「异步」徽标。徽标是 HTML，不能拼进
+            // name（行模板会对 name 做 esc），故置于 meta（meta 直接注入不经转义）开头。
             if (ev.async) {
                 key = 'zap';
                 cls += ' asyncx';
-                name += '<span class="async-badge">' + svg(IC.zap) + '异步</span>';
+                meta += '<span class="async-badge">' + svg(IC.zap) + '异步</span> ';
             }
-            meta = `${ev.model || ev.route || '?'} · 入${ev.input_tokens||0}/出${ev.output_tokens||0}tok` +
+            meta += `${ev.model || ev.route || '?'} · 入${ev.input_tokens||0}/出${ev.output_tokens||0}tok` +
                    (ev.has_tools ? ' · tools' : '') +
                    (ev.async ? ' · 与主问答并发（不阻塞响应）' : '') +
                    (ev.success ? '' : ' · ' + (ev.fail_reason||'失败'));
