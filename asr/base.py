@@ -168,6 +168,7 @@ class BaseASR:
         try:
             _obs_emit_explicit({
                 "type": "asr_call", "span_id": trace_id, "parent_id": trace_id,
+                "engine_id": self.name,
                 "audio_ms": round(audio_seconds * 1000, 1),
                 "audio_len_s": round(audio_seconds, 3),
                 "inference_ms": round(inference_ms, 1),

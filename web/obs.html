@@ -859,7 +859,8 @@ function renderTimeline(evs) {
         else if (ev.type === 'asr_call') {
             key = 'mic';
             name = 'ASR 转录';
-            meta = '推理 ' + fmtMs(ev.inference_ms) + ' · RTF ' + (ev.rtf || 0).toFixed(2) +
+            meta = (ev.engine_id ? esc(ev.engine_id) + ' · ' : '') +
+                   '推理 ' + fmtMs(ev.inference_ms) + ' · RTF ' + (ev.rtf || 0).toFixed(2) +
                    (ev.text ? '  → ' + esc(ev.text) : '') +
                    (ev.success ? '' : ' · ' + esc(ev.fail_reason||'失败'));
             cls = ev.success ? '' : 'err';
