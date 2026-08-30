@@ -15,17 +15,44 @@ INTERVIEWER_PROMPT = """你现在担任用户的【模拟面试官】。请严�
 - 说话仍用纯文本口语化表达，不用 emoji / markdown 记号。
 """
 
+# 各环节专属面试官提示（叠加在 INTERVIEWER_PROMPT 之上，指明本环节交互方式）
+SECTION_PROMPTS = {
+    "self_intro": (
+        "本环节【自我介绍】。请引导候选人先做个 1-2 分钟自我介绍，说完结合其简历/所述经历"
+        "逐点追问（做过什么、亮点、与岗位匹配度），不要一次问完，留出你来我往的节奏。"
+        "候选人每段实质发言请先用 interview.answer 记录，再开口回应。"
+    ),
+    "project": (
+        "本环节【项目问答】。围绕候选人的项目逐段深挖：背景→难点→你的方案→结果与复盘。"
+        "就细节连续追问（当时的困难与你怎么定位、技术选型为什么这样、结果如何度量）。"
+        "把当前这一题问深透，再进入下一题（由 interview.answer / interview.skip 驱动）；"
+        "段内题走完自动进入下一环节。"
+    ),
+    "trivia": (
+        "本环节【八股文/专业基础题】。出题后给一句简短中肯的点评，再平稳进入下一题。"
+        "推进由 interview.answer / interview.skip 驱动；段内题走完自动进入下一环节。"
+    ),
+    "reverse_qa": (
+        "本环节【反问】角色反转：由候选人向你提问，你以招聘方身份专业作答。"
+        "同时在心里默默评估其提问质量（是否体现对岗位/业务的思考）。"
+        "候选人想结束本环节就说『进入下一环节』（interview.next_section）。"
+    ),
+}
+
 # 面试结束时注入的收尾态度（让模型配合 interview.end 工具给出的一次性总结）
 WRAPUP_NOTICE = "本场模拟面试已结束。如果用户还想复盘或再面一场，可以自然承接。"
 
 
-def activation_block(role: str | None, level: str | None,
-                     progress: str, current_question: str) -> str:
-    """进行中的激活态片段；注入 message 让模型知道自己在哪一题。"""
+def activation_block(role: str | None, level: str | None, section_name: str,
+                     progress: str, current_text: str, section_type: str) -> str:
+    """进行中的激活态片段；注入 message 让模型知道当前处在哪个环节/哪一题。"""
     lines = ["【模拟面试进行中】"]
     if role or level:
         lines.append(f"岗位方向：{role or '未指定'} · 难度：{level or '未指定'}")
-    lines.append(f"进度：{progress}")
-    lines.append(f"当前题：{current_question}")
-    lines.append("请继续担任面试官：针对上述当前题与用户作答进行互动。")
+    lines.append(f"当前环节：{section_name or '未知'}　{progress}")
+    if current_text:
+        lines.append(f"当前题：{current_text}")
+    else:
+        lines.append("本轮为自由交流（自我介绍追问 / 反问作答），直接按环节引导互动即可。")
+    lines.append("请继续担任面试官，配合本环节提示推进。")
     return "\n".join(lines)

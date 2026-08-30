@@ -11,11 +11,12 @@
 ###############################################################################
 
 from capabilities.base import Capability
-from capabilities.interview.state import InterviewState
+from capabilities.interview.state import InterviewState, DEFAULT_SECTIONS, DIALOGUE_TYPES
 from capabilities.interview.tools import _tools
 from capabilities.interview.prompts import (
     INTERVIEWER_PROMPT,
     WRAPUP_NOTICE,
+    SECTION_PROMPTS,
     activation_block,
 )
 
@@ -24,16 +25,17 @@ class InterviewCapability(Capability):
     name = "interview"
     priority = 10
 
-    # ── 会话状态 → 工具子集映射（s07 按需加载）───────────────────────────
-    # idle:     只留入口，模型能“开始面试”
-    # asking:   进行中，撤下 start（已开始不能再开始）
+    # ── 会话状态+环节双维 → 工具子集（s07 按需加载）────────────────────
+    # idle:     只留入口，模型能“开面试”/查状态
+    # 离散段:   可答/跳过/提示/结束/看进度
+    # 对话段:   可答（记自由交流）/结束本环段(next_section)/结束/看进度
     # finished: 可复盘或重新开一场
-    _STATE_TOOLS = {
-        "idle": ["interview.start"],
-        "asking": ["interview.answer", "interview.skip", "interview.hint",
-                    "interview.end", "interview.status"],
-        "finished": ["interview.start", "interview.status"],
-    }
+    _STATE_TOOLS_IDLE = ["interview.start"]
+    _STATE_TOOLS_DISC = ["interview.answer", "interview.skip", "interview.hint",
+                         "interview.end", "interview.status"]
+    _STATE_TOOLS_DIAL = ["interview.answer", "interview.next_section",
+                         "interview.end", "interview.status"]
+    _STATE_TOOLS_FIN = ["interview.start", "interview.status"]
 
     def tools(self) -> list[dict]:
         return _tools()
@@ -42,9 +44,13 @@ class InterviewCapability(Capability):
         try:
             st = InterviewState(_cfg(), session_id)
             st.load()
-            return list(self._STATE_TOOLS.get(st.status, self._STATE_TOOLS["idle"]))
+            if st.status == "asking":
+                return list(self._STATE_TOOLS_DIAL if st.is_dialogue() else self._STATE_TOOLS_DISC)
+            if st.status == "finished":
+                return list(self._STATE_TOOLS_FIN)
+            return list(self._STATE_TOOLS_IDLE)
         except Exception:  # noqa: BLE001 - 读态失败按 idle（只给入口，不崩）
-            return list(self._STATE_TOOLS["idle"])
+            return list(self._STATE_TOOLS_IDLE)
 
     # ── 确定性进入：命中「开始面试」关键词时由规则拉起 interview.start ─────
     def pre_entry(self, message: str, session_id: str) -> dict | None:
@@ -73,18 +79,24 @@ class InterviewCapability(Capability):
             return _DIRECTORY_HINT
 
         if st.status == "asking":
-            n_total = len(st.questions)
-            n_ans = len(st.get("answers") or [])
-            idx = min(st.get("idx", 0), n_total - 1) if n_total else 0
-            cur = st.questions[idx] if n_total else {}
-            return "\n\n".join([
+            sec = st.current_section()
+            sec_name = sec.get("name") or ""
+            stype = sec.get("type") or ""
+            if st.is_dialogue():
+                progress = f"{len(st.section_items())} 轮交流"
+                current_text = ""
+            else:
+                qs = st.section_items()
+                i = st.inline_idx()
+                progress = f"第 {i + 1}/{len(qs)} 题"
+                current_text = qs[i].get("text", "") if qs else ""
+            parts = [
                 INTERVIEWER_PROMPT,
-                activation_block(
-                    st.get("role"), st.get("level"),
-                    f"{n_ans}/{n_total} 题",
-                    cur.get("text", "") if cur else "",
-                ),
-            ])
+                SECTION_PROMPTS.get(stype, ""),
+                activation_block(st.get("role"), st.get("level"), sec_name,
+                                 progress, current_text, stype),
+            ]
+            return "\n\n".join(p for p in parts if p)
         if st.status == "finished":
             return WRAPUP_NOTICE
         return _DIRECTORY_HINT
@@ -168,6 +180,9 @@ def config_defaults() -> dict:
         "essay_csv": None,          # 题目 CSV；null→data/question_essay.csv
         "index_dir": "data/capabilities/interview/chroma",  # chromadb 落盘目录
         "store_dir": None,          # 状态目录；null→data/capabilities/interview
+        # 环节序列（可配，整体替换）。type∈self_intro/project/trivia/reverse_qa；
+        # 对话段（self_intro/reverse_qa）不设 count，离散段 count 缺省取 max_questions。
+        "sections": [dict(x) for x in DEFAULT_SECTIONS],
     }
 
 

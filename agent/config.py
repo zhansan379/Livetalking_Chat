@@ -179,6 +179,11 @@ class AgentConfig:
         return int(self.cap_param("interview", "recall_top_k", 8) or 8)
 
     @property
+    def interview_sections(self):
+        """面试环节序列（有序 list；config_defaults 给默认，yaml 可整体覆盖）。"""
+        return self.cap_param("interview", "sections") or None
+
+    @property
     def interview_bank_csv(self):
         return self.cap_param("interview", "bank_csv")
 

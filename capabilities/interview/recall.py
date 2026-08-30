@@ -84,9 +84,10 @@ async def _personalize(cfg, candidates: list[dict], resume_text: str | None,
 
 
 async def build_question_sheet(cfg, role: str | None, level: str | None,
-                               resume_text: str | None, jd_text: str | None) -> list[dict]:
-    """组装本场题单（向量检索 → LLM 个性化）。永不返回空表。"""
-    max_q = int(getattr(cfg, "interview_max_questions", 5) or 5)
+                               resume_text: str | None, jd_text: str | None,
+                               max_q: int | None = None) -> list[dict]:
+    """组装题单（向量检索 → LLM 个性化）。永不返回空表。max_q 可覆盖配置题数。"""
+    max_q = max_q or int(getattr(cfg, "interview_max_questions", 5) or 5)
     top_k = max(max_q, int(getattr(cfg, "interview_recall_top_k", 8) or 8))
 
     query = _recall_query(role, level, resume_text, jd_text)
@@ -107,3 +108,103 @@ def _plain(qs: list[dict]) -> list[dict]:
             "type": "", "rubrics": {}, "followups": [],
         })
     return out
+
+
+# ── 按环节生产题目（self_intro / project / trivia / reverse_qa）─────────
+async def build_section(cfg, section: dict, role: str | None, level: str | None,
+                        resume_text: str | None, jd_text: str | None) -> list:
+    """按环节 type 生产当前段 items。对话段返回 []（自由交流，零 LLM）；离散段永不空表。"""
+    from capabilities.interview.state import DIALOGUE_TYPES
+    stype = (section or {}).get("type") or "trivia"
+    count = int((section or {}).get("count") or 0) or int(
+        getattr(cfg, "interview_max_questions", 5) or 5)
+    if stype in DIALOGUE_TYPES:
+        return []
+    if stype == "project":
+        return await build_project_section(cfg, role, level, resume_text, count)
+    return await build_question_sheet(cfg, role, level, resume_text, jd_text, max_q=count)
+
+
+# ── 项目问答段：有简历按项目深挖；无简历/无项目用通用项目题兜底 ────────────
+_PROJECT_RUBRICS = {
+    "理解": "是否讲清项目背景与自己在其中的角色",
+    "表达": "是否条理清楚地描述项目脉络",
+    "逻辑": "难点→方案→结果是否自洽、有因果",
+    "完整": "是否覆盖背景/难点/方案/结果/复盘",
+}
+_PROJECT_FOLLOWUPS = [
+    "当时的难点具体是什么？你怎么定位并找到根因的？",
+    "技术选型为什么这样选？有没有对比过别的方案？",
+    "结果如何度量（性能/收益/工时）？有没有量化数据？",
+    "如果再重做一次，哪里会改进？",
+]
+
+
+def _projects_to_questions(projects: list[dict]) -> list[dict]:
+    out = []
+    for i, p in enumerate(projects):
+        name = (p.get("name") or f"项目{i + 1}").strip()
+        brief = "\n".join(str(p.get(k) or "") for k in ("summary", "difficulty", "highlights")).strip()
+        out.append({
+            "id": f"proj-{i}",
+            "text": f"请挑你简历里的项目『{name}』，完整讲一遍：背景 → 你的困难 → 你的方案 → 结果与复盘。",
+            "category": "项目问答",
+            "type": "behavioral",
+            "rubrics": dict(_PROJECT_RUBRICS),
+            "followups": list(_PROJECT_FOLLOWUPS),
+            # 供 system_block/hint 深挖；评分与报告忽略该字段
+            "brief": brief[:800],
+        })
+    return out
+
+
+async def _extract_projects(cfg, resume_text: str | None, want: int) -> list[dict] | None:
+    """从简历抽项目（capability=extract 便宜档）；失败/无 → None，交由兜底。"""
+    if not resume_text or not resume_text.strip():
+        return None
+    msgs = [
+        {"role": "system", "content": (
+            "你是简历解析器。读候选人简历，抽出其做过的项目，每个给："
+            "{\"name\":名称,\"summary\":一两句简介,\"difficulty\":技术或业务难点,\"highlights\":亮点与量化结果}。"
+            f"最多 {want} 个。只输出严格 JSON：{{\"projects\":[...]}}。若简历没有项目则返回 {{\"projects\":[]}}。"
+        )},
+        {"role": "user", "content": resume_text.strip()[:4000]},
+    ]
+    try:
+        from infra_ai import async_call_llm
+        raw = await async_call_llm(
+            msgs, use_json=True,
+            capability="extract",
+            extra={"kind": "interview_resume_extract"},
+            model_kwargs={"max_tokens": 600},
+        )
+        import json as _json
+        data = _json.loads((raw or "").strip()) if (raw or "").strip().startswith("{") else {}
+        projects = (data.get("projects") if isinstance(data, dict) else None) or []
+        return [p for p in projects if (p or {}).get("name")][:want]
+    except Exception as e:  # noqa: BLE001 - 抽取失败退 None 走兜底，绝不弹错
+        logger.warning("interview extract projects failed: %s", e)
+        return None
+
+
+async def build_project_section(cfg, role: str | None, level: str | None,
+                                resume_text: str | None, count: int) -> list:
+    """项目问答段 items：有简历→按项目逐段深挖；无简历/抽取失败→通用项目题兜底。永不空表。"""
+    projects = await _extract_projects(cfg, resume_text, max(1, count))
+    if projects:
+        return _projects_to_questions(projects)
+    # 兜底：通用『项目式』题
+    q = "描述一个你做过的有挑战、印象最深的项目，讲清背景、难点、你的方案与结果。"
+    pool = bank_search(cfg, q, max(count, 3))
+    if pool:
+        sheet = await _personalize(cfg, pool, None, None, max(1, count))
+        if sheet:
+            return [dict(x) for x in sheet]
+    return [{
+        "id": "proj-fallback",
+        "text": q,
+        "category": "项目问答",
+        "type": "behavioral",
+        "rubrics": dict(_PROJECT_RUBRICS),
+        "followups": list(_PROJECT_FOLLOWUPS),
+    }]

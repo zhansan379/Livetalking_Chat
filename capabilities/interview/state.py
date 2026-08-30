@@ -7,10 +7,15 @@
 #
 #  字段：
 #     session_id, role, level, resume_text, jd_text,
-#     questions  : 本场题单（每项 {id,text,category,type,rubrics,followups}）
-#     idx        : 当前正被问到的题目下标（questions[idx]）
-#     answers    : 已作答列表 [{question, answer, eval}]
-#     status     : idle | asking | finished
+#     sections     : 本场环节描述（每项 {type,name,count?,dialogue:bool}），有序
+#     section_idx  : 当前环节下标（sections[section_idx]）
+#     items        : 当前环节内容——
+#                      离散段 → 题目 dict 列表 {id,text,category,type,rubrics,followups};
+#                      对话段 → transcript [{role:"candidate",text:...}, ...]
+#     idx          : 离散段段内游标（当前 items[idx]）；对话段恒 0 不用
+#     answers      : 已作答列表 [{question, answer, eval, section_type, section_name}]
+#                    离散题一条；对话段在 next_section 追加一条整段评分记录
+#     status       : idle | asking | finished
 #     started_at, finished_at
 ###############################################################################
 
@@ -20,6 +25,18 @@ import os
 import tempfile
 
 from utils.logger import logger
+
+# 可配环节的 type 枚举（sections 里每项的 type）
+SECTION_TYPES = ("self_intro", "project", "trivia", "reverse_qa")
+# 对话式环节：自由多轮交谈、段末整段一次性评分；其余为离散题环节
+DIALOGUE_TYPES = {"self_intro", "reverse_qa"}
+# 默认环节序列（config_defaults 与 run-time 兜底共享）。对话段不设 count。
+DEFAULT_SECTIONS = [
+    {"type": "self_intro", "name": "自我介绍"},
+    {"type": "project", "name": "项目问答", "count": 3},
+    {"type": "trivia", "name": "八股文", "count": 3},
+    {"type": "reverse_qa", "name": "反问"},
+]
 
 
 def _base_dir(cfg) -> str:
@@ -68,18 +85,35 @@ class InterviewState:
         """是否有未完成的面试在进行中（供 system_block / 超时判定）。"""
         return self.status == "asking"
 
-    @property
-    def questions(self) -> list[dict]:
-        """本场题单（读缓存态；load()/save() 后与磁盘一致）。"""
-        return self.get("questions") or []
+    # ── 段/题游标（取代旧 questions/idx 单指针）───────────────
+    def current_section(self) -> dict:
+        """当前环节描述（sections[section_idx] 或空 dict）。"""
+        secs = self.get("sections") or []
+        i = int(self.get("section_idx") or 0)
+        return secs[i] if secs and 0 <= i < len(secs) else {}
 
-    @property
-    def idx(self) -> int:
-        """当前正被问到的题目下标（越过题数上限则取最后一题安全位）。"""
-        n = len(self.questions)
-        if not n:
+    def section_type(self) -> str:
+        return self.current_section().get("type") or ""
+
+    def is_dialogue(self) -> bool:
+        """当前环节是否对话式（自由多轮、段末整段评分）。"""
+        return self.section_type() in DIALOGUE_TYPES
+
+    def section_items(self, default=None):
+        """当前环节 items（离散段题单 / 对话段 transcript）。"""
+        return self.get("items", [] if default is None else default)
+
+    def inline_idx(self) -> int:
+        """离散段内游标（越界则取最后一项安全位）；对话段恒 0。"""
+        n = len(self.section_items())
+        if not n or self.is_dialogue():
             return 0
         return max(0, min(int(self.get("idx") or 0), n - 1))
+
+    def in_last_section(self) -> bool:
+        secs = self.get("sections") or []
+        i = int(self.get("section_idx") or 0)
+        return bool(secs) and i >= len(secs) - 1
 
     # ── 写入 ────────────────────────────────────────────────────────────────
     async def save(self, data: dict | None = None) -> dict:

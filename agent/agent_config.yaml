@@ -69,3 +69,11 @@ capabilities:
     essay_csv: null                   # 题目 CSV；null→data/question_essay.csv
     index_dir: "data/capabilities/interview/chroma"  # chromadb 落盘目录
     recall_top_k: 8
+    # 环节序列（可配，整体替换这份列表；缺省用能力默认 自介→项目→八股→反问）。
+    # type ∈ self_intro / project / trivia / reverse_qa；
+    # 对话段（self_intro / reverse_qa）不设 count，离散段 count 缺省取 max_questions。
+    # sections:
+    #   - { type: self_intro, name: 开场自我介绍 }
+    #   - { type: trivia,     name: 基础八股,   count: 5 }
+    #   - { type: project,    name: 项目深挖,   count: 2 }
+    #   - { type: reverse_qa, name: 反向提问 }
