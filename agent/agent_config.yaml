@@ -26,8 +26,8 @@ memory:
     recall_char_limit: 800           # 注入正文总字符上限（有界）
     recall_score_backend: auto       # auto→rerank 首选、失败退关键词；keyword→纯关键词
     extract_model: null              # 提取用模型；留空(null)复用默认文本模型
-    extract_trigger: every_turn      # every_turn | every_n_turns
-    extract_every_n_turns: 0         # 0 = 每回合都后台提取（查重/准入后很便宜）
+    extract_trigger: every_n_turns   # every_turn | every_n_turns
+    extract_every_n_turns: 3         # 每 N 轮后台提取一次；叠加空轮预滤挡寒暄/单字回应
     consolidate_threshold: 10        # 记忆条数达到该值触发后台整理去重
     consolidate_keep: 8              # 整理后条数硬上限（须 < threshold，保证收敛不再空转）
     consolidate_cooldown: 300        # 两次整理的最小间隔（秒），防阈值震荡频繁触发

@@ -28,9 +28,9 @@ _DEFAULT = {
             "recall_char_limit": 800,
             "recall_score_backend": "auto",
             "extract_model": None,
-            "extract_trigger": "every_turn",
-            "extract_every_n_turns": 0,
-            "consolidate_threshold": 10,
+            "extract_trigger": "every_n_turns",
+            "extract_every_n_turns": 3,            # 每 N 轮后台提取一次（+ 空轮预滤）
+            "consolidate_threshold": 15,
             "consolidate_keep": 8,          # 整理后条数硬上限（须 < threshold），保证收敛
             "consolidate_cooldown": 300,    # 两次整理的冷却秒数，防阈值震荡频繁触发
         },
@@ -137,10 +137,10 @@ class AgentConfig:
         ) or "auto"
         self.longterm_extract_model: str | None = longterm.get("extract_model") or None
         self.longterm_extract_trigger: str = longterm.get(
-            "extract_trigger", "every_turn"
-        ) or "every_turn"
+            "extract_trigger", "every_n_turns"
+        ) or "every_n_turns"
         self.longterm_extract_every_n: int = int(
-            longterm.get("extract_every_n_turns", 0) or 0
+            longterm.get("extract_every_n_turns", 3) or 3
         )
         self.longterm_consolidate_threshold: int = int(
             longterm.get("consolidate_threshold", 10) or 10

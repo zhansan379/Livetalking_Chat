@@ -433,17 +433,36 @@ def inject_memory_block(messages: list[dict], block: str) -> list[dict]:
 #  提取：回合结束后后台调用，候选经准入才落盘
 # ════════════════════════════════════════════════════════════════════════════
 
-def _should_extract_now() -> bool:
-    """触发节奏：every_turn 恒真；every_n_turns 按模块计数取余。"""
+# 明显寒暄/单字回应，不值得开一次后台提取 LLM
+_TRIVIAL_UTTERANCES = frozenset({
+    "嗯", "嗯嗯", "额", "哦", "噢", "好", "好的", "好吧", "对", "对的", "ok", "okay",
+    "在", "在的", "在吗", "哈", "嗨", "hi", "hello", "你好", "再见", "拜拜",
+})
+
+
+def _has_durable_signal(user_msg: str) -> bool:
+    """低成本预滤：去掉寒暄/标点后无实质内容则跳过，不调度提取 LLM（挡空轮）。"""
+    text = (user_msg or "").strip().strip("。，,.!！?？")
+    if not text:
+        return False
+    if text.lower() in _TRIVIAL_UTTERANCES:
+        return False
+    return bool(_tokenize(text))
+
+
+def _should_extract_now(user_msg: str) -> bool:
+    """触发节奏：every_n_turns 按模块计数取余且信号非空；every_turn 也过空轮预滤。"""
     global _extract_round_ctr
     cfg = get_agent_config()
     if cfg.longterm_extract_trigger != "every_n_turns":
-        return True
+        return _has_durable_signal(user_msg)
     n = cfg.longterm_extract_every_n
     if n <= 0:
-        return True
+        return _has_durable_signal(user_msg)
     _extract_round_ctr += 1
-    return _extract_round_ctr % n == 0
+    if _extract_round_ctr % n != 0:
+        return False
+    return _has_durable_signal(user_msg)
 
 
 def _emit_memory_meta(mtype: str, payload: dict) -> None:
@@ -466,7 +485,7 @@ async def extract_longterm_memory(session_id: str, last_user_msg: str, reply: st
         return
     if not reply or not reply.strip():
         return
-    if not _should_extract_now():
+    if not _should_extract_now(last_user_msg):
         return
     try:
         from obs import new_trace
@@ -480,7 +499,18 @@ async def extract_longterm_memory(session_id: str, last_user_msg: str, reply: st
             state_cleared = False
             for cand in (candidates or []):
                 rec = _candidate_to_record(cand)
-                ok, reason = should_store_memory(cand, rec, sink_slugs, seen_bodies)
+                is_update = (cand.get("op") or "add") == "update"
+                target = None
+                if is_update:
+                    target = _match_existing(cand, existing)
+                    if target is not None:
+                        # 覆写既有条目：保留 slug/created_at，body/description/type 以本轮为准
+                        rec.slug = target.slug
+                        rec.created_at = target.created_at
+                        rec.name = rec.name or target.name
+                ok, reason = should_store_memory(
+                    cand, rec, sink_slugs, seen_bodies, allow_update=(target is not None)
+                )
                 if not ok:
                     if rec.type == "state":
                         logger.debug("longterm state skip (%s): %s", rec.name, reason)
@@ -496,7 +526,8 @@ async def extract_longterm_memory(session_id: str, last_user_msg: str, reply: st
                 sink_slugs.add(rec.slug)
                 seen_bodies.add(_norm(rec.body))
                 written += 1
-                logger.info("longterm saved [%s] %s", rec.type, rec.name)
+                verb = "updated" if is_update else "saved"
+                logger.info("longterm %s [%s] %s", verb, rec.type, rec.name)
             _emit_memory_meta("memory_extract", {
                 "candidates": len(candidates or []),
                 "written": written,
@@ -509,39 +540,61 @@ async def extract_longterm_memory(session_id: str, last_user_msg: str, reply: st
 
 
 async def _call_extract(user_msg: str, reply: str, cfg, context: str = "") -> list[dict]:
-    """调 LLM 提取候选记忆（只输出 JSON 数组），解析失败返回 []。"""
+    """调 LLM 提取候选记忆（只输出 JSON 数组）。
+
+    输入 = 对话 + 【已有记忆目录】。让「是否新增 / 对既有条目更新」在生成阶段一次判定，
+    并把「assistant 输出不得归为用户」的角色边界写进 prompt（解决模型内容污染）。
+
+    候选格式：{"type","op":"add|update","name","description","body","scope"}。
+    """
     from infra_ai import async_call_llm
+    existing = list_memories()
+    catalog_block = ""
+    if existing:
+        catalog_lines = [
+            f"- [{r.type}] {r.name}: {r.description}" + (f"\n  {r.body}" if r.body else "")
+            for r in existing
+        ]
+        catalog_block = (
+            "【已有长期记忆目录】（库里有的事实不必重复输出；相对目录只会出现"
+            "「新增」或「对既有条目 update」）：\n" + "\n".join(catalog_lines)
+        )
     prompt = (
-        "你是记忆提取器。从下面这段对话中，提取值得跨会话保存的持久知识，"
-        "忽略一次性/临时性信息。只输出 JSON 数组，每项格式：\n"
-        '{"type": "user|feedback|project|reference|state", "name": "短名", '
+        "你是记忆提取器。根据下面这段对话，提取值得跨会话保存且尚未被记录的持久知识。"
+        "只输出 JSON 数组，每项格式：\n"
+        '{"type": "user|feedback|project|reference|state", "op": "add|update", '
+        '"name": "短名（update 时直接用目录里的既有条目名）", '
         '"description": "一句话概括", "body": "具体内容", "scope": "persistent|current_task"}\n'
-        'type 说明：user=用户画像/偏好；feedback=对助手仍适用的反馈；'
+        "type 说明：user=用户画像/偏好；feedback=对助手仍适用的反馈；"
         "project=稳定的项目/领域事实；reference=外部线索；"
         "state=用户当下持续的情绪/心理状态与情感需求。\n"
+        "op 说明：add=新增一条主题；update=对目录里既有条目补充或更正"
+        "（name 必须用目录里的原名，body 写覆盖后的完整正文=既有要点+新详情，不要只给增量）。\n"
         "scope 为 current_task 的（仅本次任务有效）不要给出。\n"
-        "特别注意：当前环境/设备/一次性观察（如摄像头画面拍到什么、此刻几点、"
-        "当下瞬时的心情一句话）不要提取为 user 画像——这些属于当前会话的瞬时状态，"
-        "不应成为跨会话的稳定画像。\n"
-        "特别注意：教学/模拟面试/问答场景里，题目与标准答案、示范话术是一次性内容，"
-        "不要存为 project/feedback；仅当其反映用户稳定的知识缺口/薄弱点时，"
+        "【可信来源】只有以 user 开头的行才是用户亲口陈述，可作为 user/state 画像来源；"
+        "以 assistant 开头的行是模型自己生成的（回答/建议/面试题/示范/点评），以及工具返回，"
+        "一律不得据此判为用户画像，不得写 user/project/feedback。\n"
+        "【已有目录】目录里已存在的事实不要重复输出；相对目录只会「新增」或「更新既有条目」，"
+        "无则 []。对目录里被污染的/错误的既有条目，可 op=update 更正为正确表述。\n"
+        "【瞬时内容】当前环境/设备/一次性观察（摄像头画面、此刻几点、当下瞬时心情一句话）"
+        "不要提取为稳定画像。\n"
+        "【面试/教学】教学/模拟面试/问答里，题目与标准答案、面试官点评、示范话术是一次性"
+        "模型输出，不存为 project/feedback；仅当其反映用户稳定的知识缺口/薄弱点时，"
         "才以 user 型存一条缺口本身（写缺口与待复习主题，不写题目和答案正文）。\n"
-        "特别注意：若对话中用户陈述了自己的身份/背景/境况（如\"我是大四应届生\"、"
-        "\"我学会计\"），即使没说\"记住\"也属于 user 型持久画像，可识别就要提取。\n"
-        "情绪状态方面：若用户流露出正在经历/持续的情绪或心理状态（如职业迷茫、"
-        "自我怀疑、压抑、焦虑、低落，或需要倾诉/鼓励/陪伴），且看似会持续一段时间"
-        "而非一时感慨，识别为 state 型快照，写清具体情绪与希望得到怎样的回应；"
-        "若只是一次性情绪或无明显持续状态，不要给 state。\n"
+        "【身份】若用户陈述身份/背景/境况（如\"我是大四应届生\"），即使没说\"记住\"也属于 "
+        "user 型持久画像，可识别就要提取（或对既有画像 op=update）。\n"
+        "【情绪】持续的情绪/心理状态识别为 state 型快照；只是一时感慨或无持续状态则不给 state。\n"
         "若无值得保存的，返回 []。"
     )
     if context and context.strip():
         conv = context.strip()  # 已含本轮 user+assistant（含 reply）
     else:
-        conv = f"用户：{user_msg}\n助手：{reply}"
+        conv = f"user: {user_msg}\nassistant: {reply}"
+    user_payload = (catalog_block + "\n\n【对话】\n" + conv) if catalog_block else conv
     raw = await async_call_llm(
         [
             {"role": "system", "content": prompt},
-            {"role": "user", "content": conv},
+            {"role": "user", "content": user_payload},
         ],
         use_json=True,
         extra={"kind": "longterm_extract"},
@@ -574,9 +627,24 @@ def _candidate_to_record(cand: dict) -> MemoryRecord:
     return rec
 
 
+def _match_existing(cand: dict, existing: list[MemoryRecord]) -> MemoryRecord | None:
+    """按 cand 声明的 name（update 目标）匹配既有条目；_norm 大小写/标点兜底。"""
+    name = (cand.get("name") or "").strip()
+    if not name:
+        return None
+    n = _norm(name)
+    if not n:
+        return None
+    for r in existing:
+        if n == _norm(r.name) or (r.slug and n == _norm(r.slug)):
+            return r
+    return None
+
+
 def should_store_memory(cand: dict, rec: MemoryRecord, sink_slugs: set[str],
-                        seen_bodies: set[str]) -> tuple[bool, str]:
-    """准入判断：scope 非 persistent / 字段不全 / 临时性 / 类型不允 / 重复 → 拒绝。"""
+                        seen_bodies: set[str], allow_update: bool = False) -> tuple[bool, str]:
+    """准入判断：scope 非 persistent / 字段不全 / 临时性 / 类型不允 → 拒绝。
+    精确查重（slug/body）仅对 add 生效；update 覆写既有条目时放行覆盖。"""
     if (cand.get("scope") or "persistent") != "persistent":
         return False, "scope != persistent"
     if rec.type not in MEMORY_TYPES:
@@ -586,6 +654,8 @@ def should_store_memory(cand: dict, rec: MemoryRecord, sink_slugs: set[str],
         return False, f"type {rec.type} not in store_types"
     if not rec.name or not rec.body:
         return False, "missing name/body"
+    if allow_update:
+        return True, "ok (update)"
     rec.slug = _slugify(rec.name)
     if not rec.slug or rec.slug in sink_slugs:
         return False, "duplicate slug"
@@ -624,13 +694,45 @@ def _extract_json_array(text: str) -> list[Any]:
     return []
 
 
+def _extract_json_obj(text: str) -> dict:
+    """从模型输出里稳妥取出 JSON 对象；失败返回 {}。"""
+    text = (text or "").strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else {}
+    except json.JSONDecodeError:
+        pass
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if m:
+        try:
+            parsed = json.loads(m.group(0))
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            pass
+    return {}
+
+
 # ════════════════════════════════════════════════════════════════════════════
-#  整理：阈值触发，后台去重/合并，snapshot 回滚
+#  整理：阈值触发，后台增量归并（removals/merges/untouched），snapshot 回滚
 # ════════════════════════════════════════════════════════════════════════════
 
+def _resolve_record(by_key: dict[str, MemoryRecord], name: str) -> MemoryRecord | None:
+    """在 {_norm: record} 索引里按名称解析记录；查不到返回 None。"""
+    n = _norm(name or "")
+    if not n:
+        return None
+    return by_key.get(n)
+
+
 async def consolidate_memories(session_id: str) -> None:
-    """后台整理（与 compress 同款模板：独立 trace、异常不外抛、失败回滚）。
-    入口置 _consolidating 防重入；完成（含失败）都推进冷却基准，避免频闪重试。"""
+    """后台整理（独立 trace、异常不外抛、失败回滚）：**增量归并**，不做全库重写。
+
+    由 LLM 决策 removals/merges/untouched 三操作集，应用时只删/并涉及条目，
+    untouched 的稳定主题字节级不动。入口置 _consolidating 防重入；完成（含失败）
+    都推进冷却基准，避免频闪重试。
+    """
     global _consolidating, _last_consolidate_done
     if _consolidating:
         return
@@ -642,20 +744,50 @@ async def consolidate_memories(session_id: str) -> None:
         _consolidating = True
         from obs import new_trace
         with new_trace(session_id, kind="longterm_consolidate"):
-            cleaned = await _call_consolidate(records, cfg)
+            ops = await _call_consolidate(records, cfg)
             _emit_memory_meta("memory_consolidate", {
-                "before": len(records), "after": len(cleaned),
+                "before": len(records),
+                "removals": len(ops.get("removals") or []),
+                "merges": len(ops.get("merges") or []),
+                "untouched": len(ops.get("untouched") or []),
             })
-            if not cleaned:
+            if not (ops.get("removals") or ops.get("merges")):
                 return
             snapshot = _snapshot_files()
             try:
+                by_key = {_norm(r.name): r for r in records}
+                # 存活集 = untouched ∪ merge 目标；未被提及的条目视为被删（确定性收敛）
+                kept: set[str] = set()
+                for name in ops.get("untouched") or []:
+                    r = _resolve_record(by_key, name)
+                    if r:
+                        kept.add(r.slug)
+                for m in ops.get("merges") or []:
+                    t = _resolve_record(by_key, m.get("into"))
+                    if t:
+                        kept.add(t.slug)
                 for r in records:
-                    delete_memory(r.slug, rebuild=False)
-                for r in cleaned:
-                    write_memory(r, rebuild=False)
+                    if r.slug not in kept:
+                        delete_memory(r.slug, rebuild=False)
+                        by_key.pop(_norm(r.name), None)
+                # 应用 merge：保留目标 slug/created_at，覆写 body/description
+                for m in ops.get("merges") or []:
+                    t = _resolve_record(by_key, m.get("into"))
+                    if not t:
+                        continue
+                    rec = MemoryRecord(
+                        name=t.name,
+                        description=m.get("into_desc") or t.description,
+                        type=t.type,
+                        body=m.get("body") or t.body,
+                        slug=t.slug,
+                        created_at=t.created_at,
+                    )
+                    write_memory(rec, rebuild=False)
+                    by_key[_norm(rec.name)] = rec
                 rebuild_index()
-                logger.info("longterm consolidated %d -> %d", len(records), len(cleaned))
+                logger.info("longterm consolidated %d -> %d",
+                            len(records), len(list_memories()))
             except Exception:
                 _restore_snapshot(snapshot)
                 raise
@@ -667,27 +799,30 @@ async def consolidate_memories(session_id: str) -> None:
 
 
 async def _call_consolidate(records: list[MemoryRecord],
-                            cfg=None) -> list[MemoryRecord]:
-    """调 LLM 把整库去重/合并，返回清理后的记录列表（条数硬封顶，保证收敛）。
+                            cfg=None) -> dict:
+    """调 LLM 决策**收敛操作集**（removals/merges/untouched），而非清理后的整库。
 
-    keep = longterm_consolidate_keep（须 < threshold）：LLM 一旦照抄不删，
-    这里强制截到 keep 条以内，写回后必 < threshold，从而终结「整理完又触发」空转。
+    只有超出阈值时才被调用；要求 LLM 只做必要收敛、稳定条目进 untouched，
+    merge 目标 body 保留多句细节（不精炼成一句话）。返回 dict，应用方解析。
     """
     cfg = cfg or get_agent_config()
-    keep = cfg.longterm_consolidate_keep
+    keep = max(1, cfg.longterm_consolidate_keep)
     from infra_ai import async_call_llm
     present = "\n".join(
         f"- [{r.type}] {r.name}: {r.description}\n  {r.body}" for r in records
     )
     prompt = (
-        "下面是长期记忆库。请去重、合并含义相近的条目、应用较新的更正、"
-        "剔除不再有用或已失效的内容。只输出清理后的 JSON 数组，每项格式：\n"
-        '{"type": "user|feedback|project|reference|state", "name": "短名", '
-        '"description": "一句话概括", "body": "具体内容", "scope": "persistent"}\n'
-        f"合并后总条数必须严格 ≤ {keep} 条。含义相近的多条必须并成一条；"
-        "过时/一次性/环境观察直接删除；每条 body 精炼成一句话。"
-        "宁可丢细节，总量也必须 ≤ " + str(keep) + "；不要新增对话里没有的内容。"
-        "state 型条目（当前情绪/状态快照）至多保留最新一条。"
+        "下面是长期记忆库（已超出上限条数）。只做【必要收敛】，不要全库重写、"
+        "不要复述未变化的条目。只输出一个 JSON 对象：\n"
+        '{"removals": ["确已过时/一次性/已失效的条目名", ...],\n'
+        ' "merges": [{"into": "保留的既有条目名", "into_desc": "（可改的一句话概括）", '
+        '"from": ["被并进/删除的条目名", ...], "body": "合并后的完整正文"}],\n'
+        ' "untouched": ["未变化的条目名", ...]}\n'
+        "规则：含义相近才 merge 成一条；into 必须取既有条目名，body 保留足够细节、可多句，"
+        "把 from 各条要点并入，不要只剩一句话；确已过时才 removal；其余稳定条目一律进 untouched，"
+        "原文不动。合并后总条数必须少于当前并 ≤ "
+        f"{keep}。state 型（当前情绪/状态快照）至多保留最新一条。"
+        "不要新增对话里没有的内容。"
     )
     raw = await async_call_llm(
         [
@@ -699,20 +834,23 @@ async def _call_consolidate(records: list[MemoryRecord],
         model_kwargs={"max_tokens": 4096},
         capability="consolidate",
     )
-    arr = _extract_json_array(raw or "")
-    out = []
-    for item in arr:
-        if not isinstance(item, dict):
+    ops = _extract_json_obj(raw or "")
+    by_key = {_norm(r.name): r for r in records}
+    removals = [x for x in ops.get("removals") or [] if isinstance(x, str)]
+    merges = []
+    for m in ops.get("merges") or []:
+        if not (isinstance(m, dict) and (m.get("into") or "").strip()):
             continue
-        rec = _candidate_to_record(item)
-        if rec.type in MEMORY_TYPES and rec.name and rec.body and rec.slug:
-            out.append(rec)
-    # 硬封顶：无论 LLM 照抄几条，都截到 keep 以内 → 写回后 <threshold，终结空转
-    keep = max(1, cfg.longterm_consolidate_keep)
-    if len(out) > keep:
-        logger.warning("longterm consolidate LLM returned %d (cap %d), trim", len(out), keep)
-        out = out[:keep]
-    return out
+        if _resolve_record(by_key, m.get("into")) is None:
+            continue  # into 解析不到既有条目，丢弃该 merge
+        merges.append({
+            "into": (m.get("into") or "").strip(),
+            "into_desc": (m.get("into_desc") or "").strip(),
+            "from": [x for x in m.get("from") or [] if isinstance(x, str)],
+            "body": (m.get("body") or "").strip(),
+        })
+    untouched = [x for x in ops.get("untouched") or [] if isinstance(x, str)]
+    return {"removals": removals, "merges": merges, "untouched": untouched}
 
 
 def _snapshot_files() -> dict[str, str]:
