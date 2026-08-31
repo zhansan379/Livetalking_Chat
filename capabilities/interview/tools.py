@@ -295,15 +295,23 @@ def _maybe_remember(cfg, st, report: dict) -> None:
     try:
         role = st.get('role') or ''
         level = st.get('level') or ''
-        # ① 长期记忆：固定 name → 固定 slug，同名覆盖，只留最新一条
+        # ① 长期记忆：只沉淀「用户欠缺」——针对性改进 + 待复习薄弱主题。
+        #    问答正文/总评是一次性内容（不是用户画像），不写入长期记忆；
+        #    用户稳定的知识缺口才是跨会话可用的画像。固定 name → 固定 slug，
+        #    同名覆盖，每岗位只留最新一条。
         from agent.longterm import write_memory, MemoryRecord
-        body = (report.get("summary") or "") + "。"
-        if report.get("suggested_topics"):
-            body += "建议准备：" + "、".join(report["suggested_topics"])
+        parts = []
+        imps = report.get("improvements") or []
+        topics = report.get("suggested_topics") or []
+        if imps:
+            parts.append("需针对性改进：" + "；".join(imps))
+        if topics:
+            parts.append("薄弱主题待复习：" + "、".join(topics))
+        body = "。".join(parts) or "本场无明显欠缺，存档仅作记录。"
         write_memory(MemoryRecord(
-            name=f"模拟面试复盘({role}·{level})",
-            description=f"{role}·{level} 模拟面试结果",
-            type="project",
+            name=f"面试薄弱点({role}·{level})",
+            description=f"{role}·{level} 面试暴露的知识欠缺，面试前待复习",
+            type="user",
             body=body,
         ), rebuild=True)
 
