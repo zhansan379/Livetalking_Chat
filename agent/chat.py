@@ -172,11 +172,15 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str,
         logger.exception("persist user message exception: %s", e)
 
     cfg = get_agent_config()
-    # 插口②：把启用能力的目录 + 当前会话激活态片段注入 system prompt（只读；无内容则跳过）
+    # 插口②：把启用能力的目录 + 当前会话激活态片段注入 system prompt（只读；无内容则跳过）。
+    # 固定插在第一条 system（基础提示+日期）之后，不再 append 到对话末尾——静态能力目录
+    # （如"本助手提供【模拟面试】能力…"）每次垫在最新一条既占最新注意力、又无持久性；
+    # 放首条 = 能力自述固定在第一系统消息区，跨所有轮次稳定可见。动态激活态（如面试当前
+    # 进度）同样早插，避免与最新用户消息争抢注意力。
     try:
         _cap_blk = capability_system_block(session_id, cfg)
         if _cap_blk:
-            messages.append({"role": "system", "content": _cap_blk})
+            messages.insert(1, {"role": "system", "content": _cap_blk})
     except Exception as e:  # noqa: BLE001 - 能力注入失败不应阻断主问答
         logger.exception("capability system block inject exception: %s", e)
     # 插口⑤：前端刚上传过文件 → 给本次回复注入一条临时提示（只进本次上下文、
