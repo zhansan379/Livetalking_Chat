@@ -123,7 +123,8 @@ class BaseTTS:
             from obs.recorder import now_ms
             emit_explicit({
                 "type": "tts_call",
-                "provider": getattr(self.opt, "tts", None),
+                # 池模式（TTSPool）把胜出候选引擎写进 last_tts["provider"]；单引擎则退回 opt.tts。
+                "provider": (lt or {}).get("provider") or getattr(self.opt, "tts", None),
                 "text": (text or "")[:40], "text_len": len(text or ""),
                 "attempts": att,
                 "elapsed_ms": round((time.time() - _t0) * 1000, 1),

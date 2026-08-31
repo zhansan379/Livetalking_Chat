@@ -93,24 +93,11 @@ class BaseAvatar:
         self.res_frame_queue = Queue(self.batch_size*2)
         self.render_event = Event()
 
-        _tts_modules = {
-            'edgetts': 'tts.edge',
-            'gpt-sovits': 'tts.sovits',
-            'xtts': 'tts.xtts',
-            'cosyvoice': 'tts.cosyvoice',
-            'fishtts': 'tts.fish',
-            'tencent': 'tts.tencent',
-            'doubao': 'tts.doubao',
-            'indextts2': 'tts.indextts2',
-            'azuretts': 'tts.azure',
-            'qwentts': 'tts.qwentts',
-            'omnitts': 'tts.omnitts'
-        }
+        # 路由开启且多候选时返回 TTSPool（句内回退+熔断）；否则单后端（旧行为）。
+        from tts import select_tts
 
-        if opt.tts in _tts_modules:
-            importlib.import_module(_tts_modules[opt.tts])
-            self.tts = registry.create("tts", opt.tts, opt=opt, parent=self)
-        else:
+        self.tts = select_tts(opt, parent=self)
+        if self.tts is None:
             logger.error(f"TTS module {opt.tts} not found.")
 
         _output_modules = {

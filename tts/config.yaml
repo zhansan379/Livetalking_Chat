@@ -1,0 +1,27 @@
+# tts 独立路由配置（类比 asr/config.yaml）。
+# 敏感/机器相关值用 ${ENV} 占位，支持 ${VAR:-default} 在环境变量缺失时回退默认。
+# 默认 enabled=false → 保持单引擎旧行为（见 tts/__init__.py::select_tts）。
+tts_routing:
+  enabled: ture   # 总开关：true 时按 routing.candidates 构建候选池做句内回退
+
+  circuit_breaker:                # 每候选轻量熔断：连续失败阈值 → OPEN → 冷却 → HALF_OPEN 探活
+    failure_threshold: 2
+    open_duration_sec: 30
+
+  min_audio_ms: 300               # 合成音频低于此时长(ms)视为截断/失败，触发回退下一候选
+
+  routing:
+    default_engine: ${TTS_DEFAULT:-doubao}   # 诊断用；实际按 candidates 内 priority 序
+    candidates:
+      - id: doubao
+        engine: doubao                    # 首选（火山引擎；网络可达但偶发 403）
+        enabled: true
+        priority: 1
+        params:
+          doubao_resource_id: seed-tts-2.0   # 覆盖全局 config.yaml 同名项；引擎读 attr 名同此
+          doubao_audio_format: pcm
+      - id: edge                          # 兜底示例；可按机器可达性换成其它/local 引擎
+        engine: edge                      # 对应 tts/TTS_MODULES 里的引擎名 → 模块
+        enabled: true
+        priority: 2
+        params: {}

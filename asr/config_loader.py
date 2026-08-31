@@ -13,12 +13,12 @@ ASR 配置加载器：读取 asr/config.yaml，解析 `${ENV}` 占位符，暴�
 对齐 infra_ai/core/config_loader.py 的范式，但自包含（不依赖 infra_ai）。
 """
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import yaml
+
+from utils.config_load import resolve_env
 
 logger = __import__("logging").getLogger(__name__)
 
@@ -36,27 +36,7 @@ except Exception:
 
 
 # ------------------------------------------------------------------
-# 占位符解析
-# ------------------------------------------------------------------
-
-def _resolve_env(obj: Any) -> Any:
-    """递归解析 dict/list/str 中的 `${ENV}` 占位符（支持 ${VAR:-default} 嵌套回退）。"""
-    if isinstance(obj, dict):
-        return {k: _resolve_env(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_resolve_env(i) for i in obj]
-    if isinstance(obj, str) and obj.startswith("${") and obj.endswith("}"):
-        inner = obj[2:-1]
-        if ":-" in inner:
-            var, _, default = inner.partition(":-")
-            default = _resolve_env(default) if default else ""
-            return os.environ.get(var.strip(), default)
-        return os.environ.get(inner.strip(), "")
-    return obj
-
-
-# ------------------------------------------------------------------
-# 配置对象
+# 占位符解析（复用 utils.config_load.resolve_env）
 # ------------------------------------------------------------------
 
 @dataclass
@@ -81,7 +61,7 @@ def _load() -> Config:
     with open(_CONFIG_PATH, encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
 
-    asr = _resolve_env(raw.get("asr", {}))
+    asr = resolve_env(raw.get("asr", {}))
 
     return Config(
         ENABLED=("false" not in str(asr.get("enabled", True)).lower()
