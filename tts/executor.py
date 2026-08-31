@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import copy
 import importlib
+import time
 
 from registry import create as registry_create
 from utils.cand_pool import build_candidates
@@ -64,21 +65,69 @@ class TTSPool(BaseTTS):
     # ── 句内回退驱动（同步；在 BaseTTS.process_tts 同线程内执行）──
     def txt_to_audio(self, msg: tuple[str, dict]):
         text, textevent = msg  # noqa: F841 - text 仅用于日志记录
-        tried = 0
+
+        # 观测上下文：池线程里用显式 ID 把「中间候选失败」挂回当前聊天 trace。
+        obs_ctx = {}
+        try:
+            obs_ctx = (textevent or {}).get("_obs") or {}
+        except Exception:  # noqa: BLE001 - 观测缺失不影响回退
+            pass
+
+        tried = 0              # 尝试过的候选数（跨候选回退的「候选级」计数）
+        total_attempts = 0     # 本句所有候选的真实合成尝试次数之和（含引擎内部重试）
+        any_retried = False    # 任一候选发生过重试（引擎内部 或 跨候选回退）
+
+        def _emit_candidate(cand_id, lt, elapsed_ms):
+            """失败候选发一条 tts_candidate，定位『哪个候选、为什么挂』。"""
+            if not obs_ctx:
+                return
+            try:
+                from obs import emit_explicit
+                emit_explicit({
+                    "type": "tts_candidate",
+                    "engine": cand_id, "success": False,
+                    "fail_reason": lt.get("fail_reason"),
+                    "err_type": lt.get("err_type"),
+                    "attempts": int(lt.get("attempts") or 1),
+                    "retried": bool(lt.get("retried")),
+                    "audio_ms": round(float(lt.get("audio_ms") or 0), 1),
+                    "elapsed_ms": round(elapsed_ms, 1),
+                }, trace_id=obs_ctx.get("trace_id"),
+                   session_id=obs_ctx.get("session_id"),
+                   parent_id=obs_ctx.get("parent_id"), kind="chat")
+            except Exception:  # noqa: BLE001 - 观测失败静默
+                pass
+
+        def _fmt(lt, reason, err, audio=0):
+            """把一次候选尝试归一化成统一 last_tts 结构（lt 可为 None）。"""
+            return {
+                "success": False, "fail_reason": reason, "err_type": err,
+                "audio_ms": float(lt["audio_ms"]) if lt else audio,
+                "attempts": int(lt.get("attempts") or 1) if lt else 1,
+                "retried": bool(lt.get("retried")) if lt else False,
+                "truncated": bool(lt.get("truncated")) if lt else False,
+            }
+
         for cand in self._candidates:
             if not cand.enabled:
                 continue
             if not self._health.allow_call(cand.id):
                 logger.info("[TTS] 候选 %s 熔断中，跳过", cand.id)
+                # 熔断跳过也发一条候选诊断事件，供观测聚合「被熔断次数」
+                _emit_candidate(cand.id, _fmt(None, "circuit_open", None, audio=0), 0.0)
                 continue
 
             tried += 1
             self._last_tried = cand.id
+            t0 = time.time()
             try:
                 eng = self._engine(cand)
             except Exception as e:  # noqa: BLE001 - 引擎加载失败按候选失败处理
                 logger.warning("[TTS] 候选 %s 引擎加载失败: %s", cand.id, e)
                 self._health.mark_failure(cand.id)
+                lt = _fmt(None, "engine_load_failed", type(e).__name__)
+                total_attempts += int(lt.get("attempts") or 1)
+                _emit_candidate(cand.id, lt, (time.time() - t0) * 1000)
                 continue
 
             # 传导停顿（barge-in）；last_tts 归零以便读取本句结果。
@@ -92,18 +141,18 @@ class TTSPool(BaseTTS):
                     "err_type": type(e).__name__, "audio_ms": 0,
                     "attempts": 1, "retried": False, "truncated": False,
                 }
-            lt = eng.last_tts or {
-                "success": False, "fail_reason": "unclassified",
-                "err_type": None, "audio_ms": 0,
-                "attempts": 1, "retried": False, "truncated": False,
-            }
+            lt = eng.last_tts or _fmt(None, "unclassified", None)
+
+            # WS-1.2：本句累计真实合成尝试次数；任一候选发生过重试（内部/回退）都算
+            total_attempts += int(lt.get("attempts") or 1)
+            any_retried = any_retried or bool(lt.get("retried"))
 
             ok = bool(lt.get("success")) and lt.get("audio_ms", 0) >= self._min_audio_ms
             if ok:
                 self._health.mark_success(cand.id)
                 self.last_tts = {
                     **lt, "success": True,
-                    "attempts": tried, "retried": tried > 1,
+                    "attempts": total_attempts, "retried": any_retried or tried > 1,
                     "provider": cand.engine,          # provider=胜出引擎
                 }
                 if tried > 1:
@@ -117,12 +166,14 @@ class TTSPool(BaseTTS):
                 "[TTS] 候选 %s 失败(%s, audio_ms=%s)，回退下一候选",
                 cand.id, lt.get("fail_reason"), lt.get("audio_ms"),
             )
+            _emit_candidate(cand.id, lt, (time.time() - t0) * 1000)
 
         # 全候选失败：登记为失败结果，不抛（由 _run_tts_observed 统一埋点）。
         self.last_tts = {
             "success": False, "fail_reason": "all_tts_candidates_failed",
             "err_type": None, "audio_ms": 0,
-            "attempts": tried, "retried": tried > 1, "truncated": False,
+            "attempts": total_attempts or tried,
+            "retried": any_retried or tried > 1, "truncated": False,
             "provider": self._last_tried,
         }
 

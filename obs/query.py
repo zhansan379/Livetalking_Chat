@@ -119,6 +119,8 @@ def summary(window: int | None = None) -> dict:
     tts_ms = 0.0
     tts_audio_ms = 0.0          # 合成音频毫秒（层1：audio_ms 归位）
     tts_ends_served = 0         # 端标记送达 WebRTC 次数（层2：tts_playback）
+    tts_attempts: list[int] = []   # 每句真实合成尝试次数（含引擎内部/跨候选回退）
+    circuit_skip = 0               # 候选被熔断跳过次数（tts_candidate 诊断事件）
 
     _events = _read_events()
     _bounds = _pipeline_bounds(_events)  # 全链路耗时：跨 ASR/LLM/TTS 同 trace 聚合
@@ -191,6 +193,15 @@ def summary(window: int | None = None) -> dict:
                 tts_retries += 1
             if ev.get("truncated"):
                 tts_trunc += 1
+            try:
+                if ev.get("attempts"):
+                    tts_attempts.append(int(ev.get("attempts")))
+            except (TypeError, ValueError):
+                pass
+        elif t == "tts_candidate":
+            # 逐候选诊断事件：统计「被熔断跳过」的候选，而非真实失败
+            if ev.get("fail_reason") == "circuit_open":
+                circuit_skip += 1
         elif t == "tts_playback":
             # 端标记送达观测：每句 status:"end" 被 WebRTC 出队记一次；
             # 合成成功后端标记未送达 → end_serve_rate<100%，定位「播一半」。
@@ -248,6 +259,11 @@ def summary(window: int | None = None) -> dict:
             "end_serve_rate": round(tts_ends_served / tts_calls, 4) if tts_calls else 0.0,
             "retry_count": tts_retries,
             "truncation_count": tts_trunc,
+            # 强度聚合：本句真实合成尝试次数（含引擎内部重试 + 跨候选回退）
+            "avg_attempts": round(sum(tts_attempts) / len(tts_attempts), 2)
+                                  if tts_attempts else 0.0,
+            "max_attempts": max(tts_attempts) if tts_attempts else 0,
+            "circuit_skip": circuit_skip,
         },
     }
 

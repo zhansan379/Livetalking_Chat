@@ -98,8 +98,9 @@ class EdgeTTS(BaseTTS):
             self._reset_stream()
             return
 
-        # 合成成功（可能经历过重试）
-        self.tts_ok(audio_ms=audio_ms, attempts=attempt, retried=retried)
+        # 合成成功（可能经历过重试/断流截断救回）→ 带上 truncated，让观测如实反映
+        self.tts_ok(audio_ms=audio_ms, attempts=attempt, retried=retried,
+                    truncated=truncated)
 
         # ---- 播放音频 ----
         streamlen = stream.shape[0]

@@ -310,6 +310,37 @@ class ObsTest(unittest.TestCase):
         self.assertEqual(parent.frames, 5)             # 无新增整帧
         self.assertAlmostEqual(t._audio_ms, 100.0, delta=0.01)
 
+    def test_tts_attempts_strength_and_circuit_aggregation(self):
+        # 强度聚合：每句真实合成尝试次数 avg/max（含引擎内部重试 + 跨候选回退），
+        # 以及候选被熔断跳过（circuit_open）的次数，都进 summary["tts"]。
+        from obs import query, emit_explicit
+        tid = self._write_chat_trace()
+
+        # 两句：一句 attempt=2（内部重试），另一句 attempt=1
+        for att, retried in ((2, True), (1, False)):
+            emit_explicit({
+                "type": "tts_call", "provider": "edgetts",
+                "text": "句子", "text_len": 2, "attempts": att,
+                "elapsed_ms": 100.0, "queue_ms": 5.0, "audio_ms": 2000.0,
+                "success": not retried, "fail_reason": None if not retried else "first_failed",
+                "err_type": None, "retried": retried, "truncated": False,
+            }, trace_id=tid, session_id="s1", parent_id=tid, kind="chat")
+
+        # 熔断跳过：候选诊断事件（fail_reason=circuit_open）
+        emit_explicit({
+            "type": "tts_candidate", "engine": "edgetts", "success": False,
+            "fail_reason": "circuit_open", "err_type": None, "attempts": 0,
+            "retried": False, "audio_ms": 0.0, "elapsed_ms": 0.0,
+        }, trace_id=tid, session_id="s1", parent_id=tid, kind="chat")
+
+        s = query.summary(window=None)
+        tts = s["tts"]
+        self.assertEqual(tts["avg_attempts"], 1.5)   # (2+1)/2
+        self.assertEqual(tts["max_attempts"], 2)
+        self.assertEqual(tts["circuit_skip"], 1)
+        # 真实失败但仍计入调用次数（attempt=2 那句 success=False）
+        self.assertEqual(tts["calls"], 2)
+
     def test_merged_single_trace_asr_llm_tts(self):
         # 全链路合并成一条 trace：ASR(asr_call) → chat(trace_start/llm_call/tts_call/trace_end)。
         # 模拟新流程：ASR 服务端生成回合 id → emit_explicit asr_call → 浏览器 echo →

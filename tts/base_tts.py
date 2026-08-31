@@ -38,10 +38,16 @@ class BaseTTS:
     # 相比散落的手拼字典，这里收敛结构、并提供缺省语义（不调 = 未归类失败），
     # 避免各 provider 因漏写而静默虚报 100% 成功率。
 
-    def tts_ok(self, audio_ms: float = 0, attempts: int = 1, retried: bool = False):
-        """登记本次合成成功（在确认合成出真实音频后调用一次）。"""
+    def tts_ok(self, audio_ms: float = 0, attempts: int = 1, retried: bool = False,
+               truncated: bool = False):
+        """登记本次合成成功（在确认合成出真实音频后调用一次）。
+
+        truncated：本次成功是否经历过「断流截断 → 重试救回」；救回也计数，避免截断
+        对观测完全不可见（edge 截断后重试成功的句子会带 truncated=True）。
+        """
         self.last_tts = {"success": True, "fail_reason": None, "audio_ms": audio_ms,
-                         "attempts": attempts, "retried": retried, "truncated": False}
+                         "attempts": attempts, "retried": retried,
+                         "truncated": truncated}
 
     def tts_fail(self, reason: str, attempts: int = 1, retried: bool = False,
                  truncated: bool = False, audio_ms: float = 0):
