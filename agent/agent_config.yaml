@@ -78,9 +78,19 @@ tools:
   # 传输：stdio（本地子进程，离线可用）| sse | http（远程，需网络可达）。
   # 例：filesystem / sqlite / git 等 npx 生态 MCP，或自建远程服务器。
   mcp:
-    enabled: false             # true→启动时连接下述各服务器并注册工具
-    connect_timeout: 15        # 每台服务器建连+注册的超时上限（秒）
+    enabled: true              # true→启动时连接下述各服务器并注册工具
+    connect_timeout: 60        # 每台服务器建连+注册的超时上限（秒）；npx 首次拉包可能偏慢
     servers:
+      # 网易云/腾讯/酷狗/酷我 音乐查询 MCP（@eldment/meting-agent，stdio，node/npx 需在 PATH）
+      # 提供 platforms / search / song / album / artist / playlist / url / lyric / pic，
+      # 工具名以 mcp_meting_<tool> 进入工具表。
+      # 未登录也能用，但部分平台高清/完整直达链接需 Cookie；按平台填 METING_<PLATFORM>_COOKIE，
+      # 或用 METING_COOKIE 统一兜底（优先级见该包 README）。
+      meting:
+        transport: stdio
+        command: npx
+        args: ["-y", "@eldment/meting-agent@latest"]
+        env: {}
       # 本地 stdio 示例：npx 起的 filesystem 服务器（把目录换成实际路径）
       # fs:
       #   transport: stdio
