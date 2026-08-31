@@ -18,7 +18,7 @@ customvideo_config: ''
 
 # -------- TTS ----------------------------------------------------------
 tts: doubao                   # edgetts / gpt-sovits / cosyvoice / fishtts / tencent / doubao / indextts2 / azuretts / qwentts
-REF_FILE: 'zh_female_sajiaoxuemei_uranus_bigtts'   # Doubao speaker 音色ID; 其它引擎为音色名或参考音频路径
+REF_FILE: ''   # 音色槽置空 → 各引擎用自身缺省；如需按引擎指定音色，在 tts/config.yaml routing 候选 params 里配
 REF_TEXT: ''                   # reference text for voice cloning (English or Chinese)
 TTS_SERVER: ''                 # TTS server URL, no trailing slash
 SPEECH_RATE: '+20%'            # 语速(edgetts 用，如 +20% 更快 / -15% 更慢；空=引擎默认；可被请求级 tts.rate 覆盖)

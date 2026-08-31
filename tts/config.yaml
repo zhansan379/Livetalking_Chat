@@ -18,10 +18,12 @@ tts_routing:
         enabled: true
         priority: 1
         params:
+          REF_FILE: zh_female_sajiaoxuemei_uranus_bigtts  # 本候选音色（全局 REF_FILE 已置空，这里按候选指定）
           doubao_resource_id: seed-tts-2.0   # 覆盖全局 config.yaml 同名项；引擎读 attr 名同此
           doubao_audio_format: pcm
       - id: edge                          # 兜底示例；可按机器可达性换成其它/local 引擎
-        engine: edge                      # 对应 tts/TTS_MODULES 里的引擎名 → 模块
+        engine: edgetts                   # 必须等于 registry/模块名(tts/__init__.py TTS_MODULES 的 key)；id 可另起观测标签
         enabled: true
         priority: 2
-        params: {}
+        params:
+          REF_FILE: zh-CN-XiaoxiaoNeural   # edge 音色（全局 REF_FILE 是豆包 ID，edge 不识别；这里按候选覆盖）
