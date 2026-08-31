@@ -49,6 +49,8 @@ chromadb
 # web_search 依赖；lxml 需 <6（6.x 的 DLL 在本机 uv Python 上加载失败）
 ddgs
 lxml<6
+# MCP 外部工具接入（agent/mcp.py）：连接 stdio/sse/http MCP 服务器复用其工具
+mcp
 #gradio_client
 #azure-cognitiveservices-speech
 

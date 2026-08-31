@@ -73,6 +73,31 @@ tools:
     duck: true         # 数字人说话时自动压低音量（音量闪避，降低外放串麦干扰 ASR）
     duck_gain: 0.25    # 闪避时压到的比例 0.05-1.0
 
+  # MCP（Model Context Protocol）外部工具接入（默认关闭；需要时改为 true 后重启生效）
+  # 连接多台 MCP 服务器，把其工具以 mcp_<server>_<tool> 注册进工具表。
+  # 传输：stdio（本地子进程，离线可用）| sse | http（远程，需网络可达）。
+  # 例：filesystem / sqlite / git 等 npx 生态 MCP，或自建远程服务器。
+  mcp:
+    enabled: false             # true→启动时连接下述各服务器并注册工具
+    connect_timeout: 15        # 每台服务器建连+注册的超时上限（秒）
+    servers:
+      # 本地 stdio 示例：npx 起的 filesystem 服务器（把目录换成实际路径）
+      # fs:
+      #   transport: stdio
+      #   command: npx
+      #   args: ["-y", "@modelcontextprotocol/server-filesystem", "C:/data"]
+      #   env: {}
+      # 远程 http 示例（需网络可达；headers 会被烤进 http 客户端）
+      # remote_http:
+      #   transport: http
+      #   url: "https://example.com/mcp"
+      #   headers: {}
+      # 远程 sse 示例
+      # remote_sse:
+      #   transport: sse
+      #   url: "https://example.com/sse"
+      #   headers: {}
+
 # ── 可插拔能力（下述默认值来自各能力 config_defaults()，此处可覆盖）──
 capabilities:
   interview:

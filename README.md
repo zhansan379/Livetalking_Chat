@@ -23,6 +23,7 @@
 - **多 TTS 引擎**：edge-tts / gpt-sovits / cosyvoice / fishtts / tencent / doubao / indextts2 / azuretts / qwentts
 - **本地 ASR 端点**：可选集成 FunASR/SenseVoice（`/api/asr`），亦支持外部 FunASR 服务并带热词
 - **摄像头「看用户」**：数字人可经 agent 工具按需抓一帧摄像头画面交给视觉模型，描述用户当下状态（见 [`docs/摄像头看用户工具.md`](docs/摄像头看用户工具.md)）
+- **MCP 外部工具接入**：通过 `agent/mcp.py` 连接多台 MCP 服务器（stdio / sse / http），把其工具以 `mcp_<server>_<tool>` 注入对话工具表，复用生态工具（filesystem / sqlite / git 等）（见 [`docs/how-to-mcp.md`](docs/how-to-mcp.md)）
 - **管理后台**：`web/admin.html` 查看全局配置与活跃会话
 - **多种推流方式**：WebRTC / RTMP / RTCPush / 虚拟摄像头（virtualcam）
 

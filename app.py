@@ -107,6 +107,12 @@ async def on_shutdown(app):
         await aclose_all_clients()
     except ImportError:
         pass
+    # MCP 服务器：关闭连接、清掉 mcp_ 前缀工具（失败/未启用时静默跳过）
+    try:
+        from agent.mcp import close_mcp_servers
+        await close_mcp_servers()
+    except Exception as e:  # noqa: BLE001 - 关闭失败不应挡主链路退出
+        logger.warning("mcp close skipped: %s", e)
 
 async def download_record(request):
     sessionid = request.match_info.get('sessionid')
@@ -209,6 +215,18 @@ def main():
 
     logger.info('start http server; http://<serverip>:'+str(opt.listenport))
     # logger.info('如果使用webrtc，推荐访问webrtc集成前端: http://<serverip>:'+str(opt.listenport)+'/dashboard.html')
+    async def _boot_mcp():
+        """后台启动 MCP 服务器连接（配置未启用/失败只告警，不影响服务启动）。"""
+        try:
+            from agent.config import get_agent_config
+            from agent.mcp import start_mcp_servers
+            cfg = get_agent_config()
+            started = await start_mcp_servers(cfg)
+            if started:
+                logger.info("MCP servers started: %s", started)
+        except Exception as e:  # noqa: BLE001 - MCP 启动失败不应终结服务
+            logger.warning("MCP startup failed: %s", e)
+
     def run_server(runner):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -232,6 +250,11 @@ def main():
             loop.create_task(reminder_manager.run())
         except Exception as e:
             logger.exception('reminder scheduler init failed: %s', e)
+        # MCP 服务器：配置启用时后台建连并注册工具（失败只告警）
+        try:
+            loop.create_task(_boot_mcp())
+        except Exception as e:
+            logger.exception('mcp boot init failed: %s', e)
         loop.run_forever()    
     #Thread(target=run_server, args=(web.AppRunner(appasync),)).start()
     run_server(web.AppRunner(appasync))

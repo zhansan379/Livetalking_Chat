@@ -74,6 +74,13 @@ _DEFAULT = {
             "duck": True,               # 数字人说话时自动压低音量（音量闪避）
             "duck_gain": 0.25,          # 闪避时压到的比例 0.05-1.0
         },
+        # MCP（Model Context Protocol）外部工具接入：连接多台服务器、注册其工具为
+        # mcp_<server>_<tool>。传输支持 stdio（本地子进程）/ sse / http（远程）。
+        "mcp": {
+            "enabled": False,           # 主开关；false 时零开销不连任何服务器
+            "connect_timeout": 15,      # 每台服务器建连+注册的超时上限（秒）
+            "servers": {},
+        },
     },
     "capabilities": {},
 }
@@ -187,6 +194,15 @@ class AgentConfig:
         self.play_music_device = w_music.get("device") or None
         self.play_music_duck: bool = bool(w_music.get("duck", True))
         self.play_music_duck_gain: float = float(w_music.get("duck_gain", 0.25) or 0.25)
+
+        w_mcp = tools.get("mcp", {}) or {}
+        self.tool_mcp_enabled: bool = bool(w_mcp.get("enabled", False))
+        self.mcp_connect_timeout: int = int(w_mcp.get("connect_timeout", 15) or 15)
+        # 每台 MCP 服务器一条 (name, spec)；dict 按 name 排序保证注册顺序确定性
+        self.mcp_servers: list[tuple[str, dict]] = sorted(
+            ((k, v) for k, v in (w_mcp.get("servers") or {}).items() if isinstance(v, dict)),
+            key=lambda kv: kv[0],
+        )
 
         # —— 可插拔能力配置（通用命名空间，非硬编码任何能力名）——
         # 值由 load_agent_config 用各能力 config_defaults() 拼默认、再叠用户覆盖。
