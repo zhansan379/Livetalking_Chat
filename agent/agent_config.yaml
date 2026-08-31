@@ -64,6 +64,14 @@ tools:
   shutdown_pc:
     enabled: true      # true→模型在用户明确表达关机意图时调用 shutdown_pc 关机
     delay_max_seconds: 3600   # 延迟关机缓冲上限（秒）
+  # 本地音乐播放（默认关闭；需要时改为 true 后重启生效）
+  play_music:
+    enabled: true      # true→模型在用户表达听歌/背景音乐时调用 play_music 播放本地音乐
+    dir: null          # 音乐目录；null→data/music（放 .mp3/.wav/.flac/.m4a/.ogg 等）
+    volume: 80         # 默认音量 0-100
+    device: null       # pyaudio 输出设备索引；null→系统默认声卡
+    duck: true         # 数字人说话时自动压低音量（音量闪避，降低外放串麦干扰 ASR）
+    duck_gain: 0.25    # 闪避时压到的比例 0.05-1.0
 
 # ── 可插拔能力（下述默认值来自各能力 config_defaults()，此处可覆盖）──
 capabilities:

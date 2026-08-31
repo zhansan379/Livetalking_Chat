@@ -20,7 +20,7 @@ scipy
 #python_speech_features
 ##numba
 resampy
-#pyaudio
+pyaudio        # play_music 工具：本机声卡输出
 soundfile==0.12.1
 einops
 #configargparse

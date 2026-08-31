@@ -66,6 +66,14 @@ _DEFAULT = {
             # 破坏性工具，默认关闭：需要时在 yaml 里显式启用
             "enabled": False,
         },
+        "play_music": {
+            "enabled": False,           # 本地音乐播放开关
+            "dir": None,                # 音乐目录；null→data/music（放 .mp3/.wav/.flac 等）
+            "volume": 80,               # 默认音量 0-100
+            "device": None,             # 输出设备索引；null→系统默认声卡
+            "duck": True,               # 数字人说话时自动压低音量（音量闪避）
+            "duck_gain": 0.25,          # 闪避时压到的比例 0.05-1.0
+        },
     },
     "capabilities": {},
 }
@@ -171,6 +179,14 @@ class AgentConfig:
 
         w_shutdown = tools.get("shutdown_pc", {}) or {}
         self.tool_shutdown_pc_enabled: bool = bool(w_shutdown.get("enabled", False))
+
+        w_music = tools.get("play_music", {}) or {}
+        self.tool_play_music_enabled: bool = bool(w_music.get("enabled", False))
+        self.play_music_dir = (str(w_music.get("dir")) or None) if w_music.get("dir") else None
+        self.play_music_volume: int = int(w_music.get("volume", 80) or 80)
+        self.play_music_device = w_music.get("device") or None
+        self.play_music_duck: bool = bool(w_music.get("duck", True))
+        self.play_music_duck_gain: float = float(w_music.get("duck_gain", 0.25) or 0.25)
 
         # —— 可插拔能力配置（通用命名空间，非硬编码任何能力名）——
         # 值由 load_agent_config 用各能力 config_defaults() 拼默认、再叠用户覆盖。

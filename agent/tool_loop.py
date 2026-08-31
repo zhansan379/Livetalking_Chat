@@ -33,6 +33,9 @@ from agent.files import _file_tool_specs as _file_tool_specs
 # 系统关机工具（shutdown_pc；与 web_search/files 平级，非能力）
 from agent.shutdown import _shutdown_tool_specs as _shutdown_tool_specs
 
+# 本地音乐播放工具（play_music；与 shutdown_pc/files 平级，非能力）
+from agent.music import _music_tool_specs as _music_tool_specs
+
 # 观测：随 obs 包可用与否优雅降级（观测失败不影响工具循环）
 try:
     from obs import emit, round_span
@@ -528,6 +531,11 @@ TOOL_REGISTRY: dict[str, dict] = {
     **{
         spec["name"]: {**spec, "config_flag": "tool_shutdown_pc_enabled"}
         for spec in _shutdown_tool_specs()
+    },
+    # 本地音乐播放工具（非能力）。只在用户明确表达听歌/背景音乐意图时调用
+    **{
+        spec["name"]: {**spec, "config_flag": "tool_play_music_enabled"}
+        for spec in _music_tool_specs()
     },
     # 以后新增工具：在这里加一个 entry，并在 agent_config.yaml 里加 tools.<name>.enabled
 }
