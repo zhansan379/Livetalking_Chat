@@ -69,6 +69,11 @@ class DoubaoTTS(BaseTTS):
         self._first = True                              # 是否首个分帧
         self._audio_ms = 0.0            # 本句实际送入播放的音频毫秒（OBS 合成时长归位）
 
+        # 会话级重建重试：WS 连接中途断开/静默无音（session_failed / no_audio）时，
+        # 重新建立连接对本句再合成，共 1+_max_retry 次尝试。打断(barge-in)不重试。
+        # 可用 opt.doubao_retry 覆盖（候选 cand.params 或 config 注入）；缺省 1 次重试。
+        self._max_retry = max(0, int(getattr(self.opt, "doubao_retry", 1)))
+
         if not self.api_key:
             logger.warning("DoubaoTTS(wss): DOUBAO_API_KEY 未设置，请设置环境变量")
 
@@ -92,26 +97,45 @@ class DoubaoTTS(BaseTTS):
         speaker = tts_cfg.get("ref_file", self.voice)
         resource_id = tts_cfg.get("resource_id", self.resource_id)
 
-        self._pending = np.array([], dtype=np.float32)
-        self._first = True
-        self._got_audio = False   # WS 会话内是否真的收到过音频字节（区分「静默失败」）
-        self._audio_ms = 0.0      # 本句音频累计时长，_consume_pcm 里累加
+        # 会话级重建重试循环：session_failed / no_audio → 重建 WS 对本句再合成。
+        # 结果按真实尝试次数登记（attempts / retried），打断(barge-in)不重试。
+        max_try = self._max_retry + 1
         try:
-            # 合并 全局默认(config doubao_tone) + 每句覆盖(datainfo['tts']) → req_params
-            req_params = self._build_req(speaker, resource_id, textevent)
-            # 在 TTS 线程里驱动一个独立事件循环，跑完整 WS 会话
-            asyncio.run(self._run_session(text, req_params, resource_id, msg))
-            # 会话正常走完但没出音（或被打断）也要如实登记，杜绝静默虚报成功
-            if self.state != State.RUNNING:
-                self.tts_fail("barge_in")
-            elif self._got_audio:
-                self.tts_ok(audio_ms=self._audio_ms)
-            else:
-                self.tts_fail("no_audio")
-        except Exception:  # noqa: BLE001 - 失败不吞栈，回退到结束标记
-            logger.exception("DoubaoTTS(wss) session failed")
-            self.tts_fail("session_failed")
+            for attempt in range(1, max_try + 1):
+                # 每次尝试前清零流状态，避免上一次残留污染下一次合成
+                self._pending = np.array([], dtype=np.float32)
+                self._first = True
+                self._got_audio = False   # 本会话内是否真的收到过音频字节（区分「静默失败」）
+                self._audio_ms = 0.0      # 本句音频累计时长，_consume_pcm 里累加
+                try:
+                    # 合并 全局默认(config doubao_tone) + 每句覆盖(datainfo['tts']) → req_params
+                    req_params = self._build_req(speaker, resource_id, textevent)
+                    # 在 TTS 线程里驱动一个独立事件循环，跑完整 WS 会话
+                    asyncio.run(self._run_session(text, req_params, resource_id, msg))
+                except Exception:  # noqa: BLE001 - 会话异常：区别于静默失败，单独记原因
+                    logger.exception(
+                        "DoubaoTTS(wss) session failed (attempt %d/%d)", attempt, max_try
+                    )
+                    if attempt >= max_try:
+                        self.tts_fail("session_failed", attempts=attempt, retried=attempt > 1)
+                        break
+                    logger.warning("DoubaoTTS(wss) 会话断开，重建 WS 本句重试…（%d/%d）", attempt, max_try)
+                    continue
+
+                # 会话正常走完该登记成败；打断不重试
+                if self.state != State.RUNNING:
+                    self.tts_fail("barge_in", attempts=attempt, retried=attempt > 1)
+                    break
+                if self._got_audio:
+                    self.tts_ok(audio_ms=self._audio_ms, attempts=attempt, retried=attempt > 1)
+                    break
+                # 会话走完却无音频：属「静默失败」，退化为可重试
+                if attempt >= max_try:
+                    self.tts_fail("no_audio", attempts=attempt, retried=attempt > 1)
+                    break
+                logger.warning("DoubaoTTS(wss) 渲染无音频，重建 WS 本句重试…（%d/%d）", attempt, max_try)
         finally:
+            # 结束标记只发一次（无论成败/打断/重试）
             self._send_end(text, textevent)
 
     # ── 语气调整：分层合并请求参数 ────────────────────────────────────
