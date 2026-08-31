@@ -70,6 +70,7 @@ tools:
   play_music:
     enabled: true      # true→模型在用户表达听歌/背景音乐时调用 play_music 播放本地音乐
     dir: null          # 音乐目录；null→data/music（放 .mp3/.wav/.flac/.m4a/.ogg 等）
+    download_dir: null # 在线下载(action=download)的保存目录；null→data/music（自动进本地列表离线可播）
     volume: 80         # 默认音量 0-100
     device: null       # pyaudio 输出设备索引；null→系统默认声卡
     duck: true         # 数字人说话时自动压低音量（音量闪避，降低外放串麦干扰 ASR）

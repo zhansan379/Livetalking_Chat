@@ -200,6 +200,8 @@ class AgentConfig:
         w_music = tools.get("play_music", {}) or {}
         self.tool_play_music_enabled: bool = bool(w_music.get("enabled", False))
         self.play_music_dir = (str(w_music.get("dir")) or None) if w_music.get("dir") else None
+        self.play_music_download_dir = (str(w_music.get("download_dir")) or None) \
+            if w_music.get("download_dir") else None
         self.play_music_volume: int = int(w_music.get("volume", 80) or 80)
         self.play_music_device = w_music.get("device") or None
         self.play_music_duck: bool = bool(w_music.get("duck", True))

@@ -68,3 +68,8 @@ tools:
   调大 `connect_timeout`，或确认 npx/node 在 PATH 里。
 - **工具没出现**：`tools.mcp.enabled` 没开；或服务器没连上（看启动日志告警）。
 - **远程连不上**：开发机出网受限时，sse/http 服务器的域名可能不可达，优先用本地 stdio 服务器。
+- **meting 平台参数**：`mcp_meting_search` / `mcp_meting_url` 等工具的平台参数是 `platform`
+  （取值 `netease | tencent | kugou | kuwo`），不是 `source`。传 `source` 会报
+  `Invalid option: expected one of "netease"|"tencent"|...`。
+  `url` 工具返回 JSON 嵌套在 `data.url`（附 `size`/`br` 码率），播放/下载时把 `data.url` 直接
+  交给 `play_music`（在线播放用 `play_online`、离线收听用 `download`）。

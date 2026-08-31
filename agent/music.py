@@ -33,6 +33,17 @@ _AUDIO_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".aac", ".wma", ".opus"}
 _FFMPEG = shutil.which("ffmpeg")
 
 
+def _scan_dir(base) -> list[str]:
+    """扫某个目录下所有支持的音频文件（含子目录），排序返回绝对路径。"""
+    out = []
+    if base and os.path.isdir(base):
+        for root, _dirs, fs in os.walk(base):
+            for fn in sorted(fs):
+                if os.path.splitext(fn)[1].lower() in _AUDIO_EXTS:
+                    out.append(os.path.join(root, fn))
+    return sorted(out)
+
+
 def _now() -> float:
     return time.time()
 
@@ -247,14 +258,7 @@ class MusicPlayer:
 
     # ── 曲目/resolution ────────────────────────────────────────────────────
     def _scan(self) -> list[str]:
-        base = self._music_dir
-        out = []
-        if base and os.path.isdir(base):
-            for root, _dirs, fs in os.walk(base):
-                for fn in sorted(fs):
-                    if os.path.splitext(fn)[1].lower() in _AUDIO_EXTS:
-                        out.append(os.path.join(root, fn))
-        return sorted(out)
+        return _scan_dir(self._music_dir)
 
     def _scan_dir_label(self) -> str:
         return self._music_dir if self._music_dir else "（未配置，默认 data/music）"
@@ -343,6 +347,20 @@ class MusicPlayer:
         self._track_path = None
         self._online = False
         self._online_name = None
+
+    def _download_rescan(self, base: str):
+        """下载成功后把新文件并入本地列表，让它可以立即『播放』。
+
+        不依赖 _music_dir 是否已同步过配置：直接增量并入 base 目录下已有的音频，
+        因此下载是启动后第一条指令时也能正确离线播放。
+        """
+        try:
+            known = {os.path.abspath(p) for p in self._playlist}
+            existing = set(os.path.abspath(p) for p in _scan_dir(base))
+            for p in sorted(existing - known):
+                self._playlist.append(p)
+        except Exception:  # noqa: BLE001 - 刷新失败不致命，下次扫描会补上
+            logger.warning("music: playlist rescan after download failed", exc_info=True)
 
     def _track_name(self) -> str:
         if self._online and self._online_name:
@@ -451,8 +469,119 @@ async def play_music(args: dict, cfg, ctx=None) -> str:
         "volume": float(getattr(cfg, "play_music_volume", 80) or 80) / 100.0,
         **args,
     }
+    # 专属「下载」分支：不占用播放器 worker 队列，独立后台下载，避免阻塞播放
+    if action in ("download", "下载", "存音乐"):
+        ddir = getattr(cfg, "play_music_download_dir", None) or _download_dir()
+        return await asyncio.to_thread(download_music, args, ddir)
     # 阻塞式命令派发挪到线程池，避免卡住 asyncio 事件循环
     return await asyncio.to_thread(music_player.dispatch, action, tool_cfg)
+
+
+# ── 下载到本地（离线收听）────────────────────────────────────────────────────
+# Windows 文件名非法字符（路径分隔 / 控制字符 / 保留符号）——其余一律保留，含中文歌名
+_UNSAFE_FN_CHARS = frozenset('/\\:*?"<>|') | frozenset(
+    chr(c) for c in range(0, 32)
+)
+
+
+def _download_dir() -> str:
+    return os.path.join("data", "music")
+
+
+def _sanitize_filename(name: str) -> str:
+    """把歌名清洗成可安全落盘的文件名（保留中文，仅去掉路径分隔符/控制字符/尾点）。"""
+    name = (name or "").strip()
+    # 去掉可能跟的扩展名
+    base, _ext = os.path.splitext(name)
+    cleaned = "".join("_" if ch in _UNSAFE_FN_CHARS else ch for ch in base).strip(" ._")
+    return cleaned or "在线音乐"
+
+
+def _probe_ok(path: str) -> bool:
+    """用 ffmpeg 把文件解到空掷掉：能正常解出音频（退出码 0 且产出时长）→ 可用。"""
+    if not _FFMPEG or not os.path.isfile(path) or os.path.getsize(path) < 1024:
+        return False
+    try:
+        from subprocess import Popen, PIPE, DEVNULL
+        p = Popen(
+            [_FFMPEG, "-v", "error", "-i", path, "-f", "null", "-"],
+            stdout=DEVNULL, stderr=PIPE,
+        )
+        _all, err = p.communicate(timeout=30)
+    except Exception:  # noqa: BLE001
+        return False
+    if p.returncode != 0:
+        logger.warning("music: download verify failed (no decodable audio): %s", err[:200])
+        return False
+    return True
+
+
+def download_music(args: dict, ddir: str) -> str:
+    """把 meting 拿到的在线播放链接存成本地文件（离线收听），成功后进本地列表。
+
+    优先原流 `-c copy`（快、保原样）；若落盘文件非可解码音频（平台加密/毒化流），
+    回退转码成标准 mp3；仍失败则如实返回，不编造已下载。
+    """
+    url = (args or {}).get("url") or ""
+    if not str(url).strip():
+        return ("（下载需要可播放链接：请先用 mcp_meting_search 搜到歌曲、"
+                "再用 mcp_meting_url 拿到可播放地址，然后说『下载《歌名》』。）")
+    name = str(args.get("name") or "").strip() or "在线音乐"
+    if not _FFMPEG:
+        return "（下载失败：这台电脑没有 ffmpeg，无法把在线音频存成文件。）"
+
+    base = os.path.abspath(ddir or _download_dir())
+    os.makedirs(base, exist_ok=True)
+    dest = os.path.join(base, _sanitize_filename(name) + ".mp3")
+
+    # 1) 先试原流直存（不重编码，保留原始质量/速度）
+    try:
+        from subprocess import Popen, PIPE
+        p = Popen(
+            [_FFMPEG, "-v", "error", "-y", "-i", str(url), "-c", "copy", dest],
+            stdout=PIPE, stderr=PIPE,
+        )
+        _o, err = p.communicate(timeout=90)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("music: download(copy) exc: %s", e)
+        p, err = None, ""
+
+    if p is not None and p.returncode == 0 and _probe_ok(dest):
+        return _download_done(dest, ddir, copied=True)
+
+    # 2) 原流不可/被加密 → 回退重编码成标准 mp3
+    try:
+        from subprocess import Popen, PIPE
+        p = Popen(
+            [_FFMPEG, "-v", "error", "-y", "-i", str(url),
+             "-acodec", "libmp3lame", "-b:a", "192k", dest],
+            stdout=PIPE, stderr=PIPE,
+        )
+        _o, err = p.communicate(timeout=120)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("music: download(reencode) exc: %s", e)
+        p, err = None, ""
+
+    if p is not None and p.returncode == 0 and _probe_ok(dest):
+        return _download_done(dest, ddir, copied=False)
+    # 清掉失败产生的残留文件
+    if os.path.isfile(dest):
+        try:
+            os.remove(dest)
+        except Exception:  # noqa: BLE001
+            pass
+    detail = (err or b"").decode("utf-8", "replace")[:120] if isinstance(err, (bytes, bytearray)) \
+        else str(err or "")[:120]
+    return f"（下载《{name}》失败：该链接无法解出可播放音频（{detail.strip()}）。）"
+
+
+def _download_done(dest: str, ddir: str, copied: bool) -> str:
+    """下载成功后把文件并入本地列表（离线可直接播），返回所存位置说明。"""
+    # 让播放列表立即感知新文件（url 是 dst，覆盖可能已存在的同名）
+    music_player._download_rescan(os.path.dirname(dest))
+    mode = "原样备份" if copied else "已转码成 mp3"
+    return (f"（已把《{os.path.basename(dest)}》下载到本地（{mode}，"
+            f"存入：{dest}）。现在可以直接说『播放 {os.path.splitext(os.path.basename(dest))[0]} 』离线收听。）")
 
 
 def _music_tool_specs() -> list[dict]:
@@ -475,9 +604,14 @@ def _music_tool_specs() -> list[dict]:
                 "  - play（默认）：开始/继续播放本地或当前曲目。\n"
                 "  - play_online：在线播放。配 url 参数（必填，mcp_meting_url 拿到的可播放链接）、"
                 "name（可选，显示用歌名，如『稻香』）。\n"
+                "  - download：把在线链接下载保存到本地（离线收听，自己已购买的歌曲）。"
+                "配 url（必填，同 play_online）+ name（歌名，会成为保存的文件名）。"
+                "下载成功后会进本地音乐列表，之后离线可直接说『播放《歌名》』。"
+                "优先原样存档；链接被平台加密/非标准音频时自动转码成 mp3，仍失败则如实说明。\n"
                 "  - pause：暂停当前；resume：继续。\n"
                 "  - stop：停止并释放；next：下一首；prev：上一首。\n"
                 "  - volume：调音量，volume 填 0-100 整数（如『音量 30』→ volume=30）。\n"
+                "  - download：下载保存到本地（离线收听），配 url + name。\n"
                 "  - list：列出本地音乐目录里的歌曲（用这个拿序号/歌名再 play）。\n"
                 "  - status：查询当前播放状态与音量。\n"
                 "调用后如实把结果（正在播放哪首 / 已暂停 / 已停止 / 已调到的音量 / 目录里有哪些）"
@@ -488,8 +622,9 @@ def _music_tool_specs() -> list[dict]:
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["play", "play_online", "pause", "resume", "stop", "next", "prev", "volume", "list", "status"],
+                        "enum": ["play", "play_online", "download", "pause", "resume", "stop", "next", "prev", "volume", "list", "status"],
                         "description": "play=播放/继续（默认）；play_online=在线播放（配 url 参数）；"
+                                       "download=下载到本地离线收听（配 url + name）；"
                                        "pause=暂停；resume=继续播放；stop=停止；next=下一首；prev=上一首；"
                                        "volume=调音量（配 volume 参数）；list=列出本地音乐目录；status=查播放状态。",
                     },
@@ -500,13 +635,13 @@ def _music_tool_specs() -> list[dict]:
                     },
                     "url": {
                         "type": "string",
-                        "description": "仅 play_online 使用：可播放的在线链接（http/https），来自"
-                                       "mcp_meting_url 工具。链接短期有效，应立即播放。",
+                        "description": "play_online / download 使用：可播放的在线链接（http/https），来自"
+                                       "mcp_meting_url 工具。链接短期有效，应立即使用。",
                     },
                     "name": {
                         "type": "string",
-                        "description": "仅 play_online 使用（可选）：显示用歌名（如『稻香』），"
-                                       "用于查状态/提示时展示；缺省显示『在线音乐』。",
+                        "description": "play_online 显示用 / download 作保存文件名（如『稻香』）："
+                                       "用于查状态/提示展示；缺省显示『在线音乐』。",
                     },
                     "volume": {
                         "type": "integer",
