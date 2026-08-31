@@ -26,15 +26,77 @@ def _recall_query(role: str | None, level: str | None,
     return "\n".join(parts)
 
 
+def _historical_weak_points(role: str | None, level: str | None, cap: int = 3) -> str:
+    """从长期记忆读该岗位的历史薄弱点（面试薄弱点 / user 型），供出题优先考察。
+
+    只捞同类角色（如都是后端）的缺口，避免换了方向还拿旧短板出题；同一方向不同难度
+    也保留（知识缺口跨难度复用）。返回可直接进 prompt 的文本；无匹配返回空串。
+    """
+    try:
+        from agent.longterm import list_memories
+    except Exception as e:  # noqa: BLE001 - 读不到就空，绝不影响出题
+        logger.warning("interview weak points import failed: %s", e)
+        return ""
+    role = (role or "").strip().lower()
+    level = (level or "").strip().lower()
+    hits: list[tuple[float, str]] = []
+    for m in list_memories():
+        if m.type != "user":
+            continue
+        name = (m.name or "").strip()
+        if not name.startswith("面试薄弱点("):
+            continue
+        inner = name[name.find("(") + 1:name.rfind(")")]
+        r, lv = "", ""
+        if "·" in inner:
+            r, lv = inner.split("·", 1)
+        r, lv = r.strip().lower(), lv.strip().lower()
+        body = (m.body or "").strip()
+        if not body:
+            continue
+        if role and role in r:
+            exact = (role == r and (not level or level == lv))
+            hits.append((1.0 if exact else 0.5, body))
+        elif not role and level and level in lv:
+            hits.append((0.5, body))
+    if not hits:
+        return ""
+    hits.sort(key=lambda x: x[0], reverse=True)
+    texts: list[str] = []
+    seen: set[str] = set()
+    for _, body in hits:
+        if body in seen:
+            continue
+        seen.add(body)
+        texts.append(body)
+        if len(texts) >= cap:
+            break
+    return "\n".join(texts)[:1500]
+
+
 async def _personalize(cfg, candidates: list[dict], resume_text: str | None,
-                       jd_text: str | None, max_q: int) -> list[dict]:
-    """③ LLM 个性化：对已排序 top-k 生成本场题单（排序+润色+简历追问）。"""
+                       jd_text: str | None, max_q: int,
+                       weak: str = "") -> list[dict]:
+    """③ LLM 个性化：对已排序 top-k 生成本场题单（排序+润色+简历追问）。
+
+    weak = 历史薄弱点文本（面试薄弱点记忆）：有则优先保留/润色相关题、优先出前，
+    让系统对着用户上次露怯的地方针对性出题。
+    """
     seed = [
         {"id": q.get("id"), "text": q.get("text"), "category": q.get("category"),
          "type": q.get("type"), "answer": (q.get("answer") or "")[:400],
          "rubrics": q.get("rubrics") or {}, "followups": list(q.get("followups") or [])}
         for q in candidates[:max(1, max_q + 2)]
     ]
+    user_parts = [
+        f"候选题目池（JSON）：{seed}",
+        f"岗位要求：{jd_text or '(无)'}\n候选人简历：{resume_text or '(无)'}",
+    ]
+    sys_extra = ""
+    if weak and weak.strip():
+        user_parts.append(f"候选人历史薄弱点（优先出这些方向的题、可加追问）：\n{weak.strip()[:1500]}")
+        sys_extra = ("以上候选人历史薄弱点要优先考察：尽量保留/结合这些薄弱方向的题，"
+                     "并可按薄弱点设计 followups 追问。这是为了让候选人针对性补短板，不是考点隐性信息。")
     prompt_msgs = [
         {"role": "system", "content": (
             "你是模拟面试的出题老师。给定候选题目池（含每题参考答案）和（可选的）岗位要求/"
@@ -45,12 +107,9 @@ async def _personalize(cfg, candidates: list[dict], resume_text: str | None,
             "\"followups\":[\"...\"]}]}。"
             "优先保留与岗位要求最相关的技术题；rubrics 可结合题目参考答案定评分锚点；"
             "若无简历可只从池里选题；题目数不超过 "
-            f"{max_q} 题。只输出 JSON。"
+            f"{max_q} 题。" + sys_extra + "只输出 JSON。"
         )},
-        {"role": "user", "content": (
-            f"候选题目池（JSON）：{seed}\n"
-            f"岗位要求：{jd_text or '(无)'}\n候选人简历：{resume_text or '(无)'}"
-        )},
+        {"role": "user", "content": "\n".join(user_parts)},
     ]
     import re as _re
     from infra_ai import async_call_llm
@@ -91,11 +150,15 @@ async def build_question_sheet(cfg, role: str | None, level: str | None,
     top_k = max(max_q, int(getattr(cfg, "interview_recall_top_k", 8) or 8))
 
     query = _recall_query(role, level, resume_text, jd_text)
+    weak = _historical_weak_points(role, level)
+    if weak:
+        # 薄弱点并入检索词，让相关题尽量进 top-k 候选池（不只靠 LLM 排序）
+        query = query + f"\n历史薄弱点（优先检索）：{weak.strip()[:600]}"
     pool = bank_search(cfg, query, top_k)
     if not pool:
         return []
 
-    sheet = await _personalize(cfg, pool, resume_text, jd_text, max_q)
+    sheet = await _personalize(cfg, pool, resume_text, jd_text, max_q, weak=weak)
     return sheet or _plain(pool[:max_q])
 
 
@@ -197,7 +260,8 @@ async def build_project_section(cfg, role: str | None, level: str | None,
     q = "描述一个你做过的有挑战、印象最深的项目，讲清背景、难点、你的方案与结果。"
     pool = bank_search(cfg, q, max(count, 3))
     if pool:
-        sheet = await _personalize(cfg, pool, None, None, max(1, count))
+        weak = _historical_weak_points(role, level)
+        sheet = await _personalize(cfg, pool, None, None, max(1, count), weak=weak)
         if sheet:
             return [dict(x) for x in sheet]
     return [{
