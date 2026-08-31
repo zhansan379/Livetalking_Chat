@@ -21,32 +21,31 @@ class CapabilityHubTest(unittest.TestCase):
         from agent.config import get_agent_config
         get_agent_config().capabilities = dict(get_agent_config().capabilities)
 
-    def test_discovery_finds_hello_and_interview(self):
+    def test_discovery_finds_interview_and_drops_removed_hello(self):
         from capabilities.hub import all_capabilities
         caps = all_capabilities()
-        self.assertIn("hello", caps)
         self.assertIn("interview", caps)
+        # hello 冒烟示例能力已从代码库移除，不应再被 discovery 发现
+        self.assertNotIn("hello", caps)
 
     def test_disabled_capability_exposes_no_tools_and_no_block(self):
         from capabilities.hub import session_tools, capability_system_block
         from agent.config import get_agent_config
         cfg = get_agent_config()
-        cfg.capabilities["hello"] = {"enabled": False}
         cfg.capabilities["interview"] = {"enabled": False}
         names = session_tools("any", cfg)
-        self.assertNotIn("hello.say_hi", names)
         self.assertNotIn("interview.start", names)
-        self.assertNotIn("hello", capability_system_block("any", cfg))
         self.assertNotIn("start", capability_system_block("any", cfg))
 
-    def test_enabled_hello_appears_and_is_cap_gated(self):
+    def test_enabled_interview_appears_and_is_cap_gated(self):
+        """启用的能力工具要出现在 session_tools，且带能力命名空间前缀(interview.*)。"""
         from capabilities.hub import session_tools
         from agent.config import get_agent_config
         cfg = get_agent_config()
-        cfg.capabilities["hello"] = {"enabled": True}
-        cfg.capabilities["interview"] = {"enabled": False}
+        # 用 temp store_dir，避免测试在仓库 data/ 目录落状态
+        cfg.capabilities["interview"] = {"enabled": True, "store_dir": self._tmp}
         names = session_tools("any", cfg)
-        self.assertIn("hello.say_hi", names)
+        self.assertIn("interview.start", names)   # idle 态暴露入口工具
 
     def test_list_enabled_tools_excludes_capability_tools(self):
         """全局工具列表（reminder 后台路径用）不得含能力工具。"""
@@ -56,7 +55,6 @@ class CapabilityHubTest(unittest.TestCase):
         register_capability_tools()
         global_tools = list_enabled_tools(get_agent_config())
         self.assertNotIn("interview.start", global_tools)
-        self.assertNotIn("hello.say_hi", global_tools)
 
     def test_interview_state_driven_exposure(self):
         """idle→[start]；asking→[answer...]无start；finished→[start,status]。"""
@@ -97,8 +95,9 @@ class CapabilityHubTest(unittest.TestCase):
         """config_defaults 并入 capabilities 覆盖节，用户可覆盖。"""
         from capabilities.hub import capability_config_defaults
         d = capability_config_defaults()
-        self.assertIn("hello", d)
         self.assertIn("interview", d)
+        # 已移除的 hello 冒烟能力不应再有默认配置
+        self.assertNotIn("hello", d)
         self.assertEqual(d["interview"]["max_questions"], 5)
 
 
