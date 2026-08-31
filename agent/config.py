@@ -31,6 +31,8 @@ _DEFAULT = {
             "extract_trigger": "every_turn",
             "extract_every_n_turns": 0,
             "consolidate_threshold": 10,
+            "consolidate_keep": 8,          # 整理后条数硬上限（须 < threshold），保证收敛
+            "consolidate_cooldown": 300,    # 两次整理的冷却秒数，防阈值震荡频繁触发
         },
     },
     "tools": {
@@ -142,6 +144,14 @@ class AgentConfig:
         )
         self.longterm_consolidate_threshold: int = int(
             longterm.get("consolidate_threshold", 10) or 10
+        )
+        # 整理后条数硬上限（须 < threshold，否则整理完又触发自己 → 无限空转）
+        self.longterm_consolidate_keep: int = max(
+            1, int(longterm.get("consolidate_keep", 8) or 8)
+        )
+        # 两次整理的冷却秒数：库在阈值线附近时，避免每写入一条就触发一次 50s 合并
+        self.longterm_consolidate_cooldown: int = max(
+            0, int(longterm.get("consolidate_cooldown", 300) or 300)
         )
 
         tools = data.get("tools", {}) or {}

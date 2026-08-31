@@ -29,6 +29,8 @@ memory:
     extract_trigger: every_turn      # every_turn | every_n_turns
     extract_every_n_turns: 0         # 0 = 每回合都后台提取（查重/准入后很便宜）
     consolidate_threshold: 10        # 记忆条数达到该值触发后台整理去重
+    consolidate_keep: 8              # 整理后条数硬上限（须 < threshold，保证收敛不再空转）
+    consolidate_cooldown: 300        # 两次整理的最小间隔（秒），防阈值震荡频繁触发
 
 tools:
   # 工具循环的防御性轮次上限（正常 1 轮即出口）

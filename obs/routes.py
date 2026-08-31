@@ -49,8 +49,19 @@ async def obs_pipeline(request):
         return _json_error(str(e))
 
 
+async def obs_memory(request):
+    """长期记忆维护（提取 / 整理）的观测聚合，供 obs.html 记忆维护面板。"""
+    try:
+        raw = request.query.get("window")
+        window = int(raw) if raw else None
+        return _json_ok(query.memory_maintenance(window=window))
+    except Exception as e:  # noqa: BLE001
+        return _json_error(str(e))
+
+
 def register(app):
     app.router.add_get("/api/obs/summary", obs_summary)
     app.router.add_get("/api/obs/requests", obs_requests)
     app.router.add_get("/api/obs/request/{trace_id}", obs_request)
     app.router.add_get("/api/obs/pipeline", obs_pipeline)
+    app.router.add_get("/api/obs/memory", obs_memory)

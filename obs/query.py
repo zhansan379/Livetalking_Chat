@@ -387,3 +387,133 @@ def pipeline(session_id: str, limit: int = 20) -> list[dict]:
         return g.get("ts") or ""
     groups.sort(key=_sort_key, reverse=True)
     return groups[:max(0, limit)]
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  长期记忆维护（提取 runs / 整理 runs）聚合：喂 obs.html「记忆维护」面板
+# ════════════════════════════════════════════════════════════════════════════
+
+_MEMORY_KINDS = ("longterm_extract", "longterm_consolidate")
+
+
+def _avg_ms(samples: list[float]) -> float:
+    return round(sum(samples) / len(samples), 1) if samples else 0.0
+
+
+def _llm_out(messages: list | None, cap: int = 4000) -> str:
+    """从 llm_call.messages 取最后一条 assistant 输出，拼成文本并封顶（供面板预览）。"""
+    if not messages:
+        return ""
+    for m in reversed(messages):
+        if (m or {}).get("role") != "assistant":
+            continue
+        c = m.get("content")
+        if isinstance(c, str):
+            return c[:cap]
+        if isinstance(c, list):
+            parts = [p.get("text", "") for p in c if isinstance(p, dict) and p.get("text")]
+            joined = "".join(parts)
+            if joined:
+                return joined[:cap]
+        break
+    return ""
+
+
+def memory_maintenance(window: int | None = None) -> dict:
+    """聚合长期记忆提取/整理的后台维护记录 + 汇总指标。
+
+    每条记录对应一次 kind∈{longterm_extract,longterm_consolidate} 的 trace，含
+    root 元信息（ts/session/success/耗时/llm次数）、模型/token、业务量
+    （memory_extract 的 candidates/written/skipped、memory_consolidate 的
+    before/after）与最近一次 LLM 返回（llm_out，供展开预览）。
+    """
+    window = query_window() if window is None else window
+    events = _read_events()
+    by: dict[str, dict] = {}
+    for ev in events:
+        if not _in_window(ev, window):
+            continue
+        kind = ev.get("kind")
+        if kind not in _MEMORY_KINDS:
+            continue
+        tid = ev.get("trace_id")
+        if not tid:
+            continue
+        r = by.setdefault(tid, {
+            "kind": kind, "ts": "", "session_id": "", "success": None,
+            "elapsed_ms": None, "llm_calls": 0,
+            "model": "", "in_tok": 0, "out_tok": 0, "tok": 0, "llm_ms": 0.0,
+            "biz": {},
+        })
+        t = ev.get("type")
+        if t == "trace_start":
+            r["ts"] = ev.get("ts") or r["ts"]
+            r["session_id"] = ev.get("session_id") or r["session_id"]
+        elif t == "trace_end":
+            r["ts"] = ev.get("ts") or r["ts"]
+            r["success"] = bool(ev.get("success")) if ev.get("success") is not None else None
+            r["elapsed_ms"] = ev.get("elapsed_ms")
+            r["llm_calls"] = ev.get("llm_calls") or 0
+        elif t == "llm_call" and ev.get("purpose") in ("longterm_extract", "longterm_merge"):
+            r["model"] = ev.get("model") or (r["model"] or "")
+            r["in_tok"] += int(ev.get("input_tokens", 0) or 0)
+            r["out_tok"] += int(ev.get("output_tokens", 0) or 0)
+            r["tok"] += int(ev.get("total_tokens", 0) or 0)
+            r["llm_ms"] += float(ev.get("elapsed_ms", 0) or 0)
+            # 助手返回在 llm_call.output（messages 只含输入 system/user），用它做展开预览
+            if not r.get("_llm_out"):
+                out = ev.get("output")
+                r["_llm_out"] = (out[:4000] if isinstance(out, str) and out else
+                                 _llm_out(ev.get("messages")))
+        elif t == "memory_extract":
+            r["biz"].update(written=ev.get("written"), candidates=ev.get("candidates"),
+                            skipped=ev.get("skipped"))
+        elif t == "memory_consolidate":
+            r["biz"].update(before=ev.get("before"), after=ev.get("after"))
+
+    records: list[dict] = []
+    for tid, r in by.items():
+        records.append({
+            "trace_id": tid,
+            "ts": r["ts"],
+            "session_id": r["session_id"],
+            "kind": r["kind"],
+            "success": r["success"],
+            "elapsed_ms": r["elapsed_ms"],
+            "llm_calls": r["llm_calls"],
+            "model": r["model"],
+            "tokens": {"input": r["in_tok"], "output": r["out_tok"], "total": r["tok"]},
+            "llm_ms": round(r["llm_ms"], 1),
+            "written": r["biz"].get("written"),
+            "candidates": r["biz"].get("candidates"),
+            "skipped": r["biz"].get("skipped"),
+            "before": r["biz"].get("before"),
+            "after": r["biz"].get("after"),
+            "llm_out": r.get("_llm_out") or "",
+        })
+    records.sort(key=lambda x: x.get("ts") or "", reverse=True)
+
+    ex = [r for r in records if r["kind"] == "longterm_extract"]
+    co = [r for r in records if r["kind"] == "longterm_consolidate"]
+
+    def _stats(rs: list[dict]) -> dict:
+        ok = sum(1 for r in rs if r["success"])
+        return {
+            "calls": len(rs),
+            "ok": ok,
+            "avg_ms": _avg_ms([r["elapsed_ms"] for r in rs if r.get("elapsed_ms") is not None]),
+            "avg_tokens": round(sum(r["tokens"]["total"] for r in rs) / len(rs), 1) if rs else 0,
+            "written": sum(r["written"] or 0 for r in rs),
+            "candidates": sum(r["candidates"] or 0 for r in rs),
+        }
+
+    stats = {"extract": _stats(ex), "consolidate": _stats(co)}
+    # 记录已按 ts 倒序，co[0] 即最近一次整理 → 展示其前后条数
+    if co:
+        stats["consolidate"]["last_before"] = co[0].get("before")
+        stats["consolidate"]["last_after"] = co[0].get("after")
+    else:
+        stats["consolidate"]["last_before"] = None
+        stats["consolidate"]["last_after"] = None
+
+    return {"stats": stats, "records": records}

@@ -23,6 +23,8 @@ import json
 import os
 import re
 import tempfile
+import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -47,6 +49,11 @@ TEMPORARY_MARKERS = (
 
 _INDEX_NAME = "_INDEX"
 _extract_round_ctr = 0  # every_n_turns 触发计数
+
+# 整理并发/冷却护栏：防重复调度、防递归、防阈值震荡空转
+_consolidating = False           # 一次整理进行中（防重入/防 consolidate 内部写回触发自己）
+_consolidate_pending = False     # 已有一发整理的调度（事件循环/线程）待执行
+_last_consolidate_done = 0.0     # 上次整理成功结束的时刻（monotonic 秒），作冷却基准
 
 
 @dataclass
@@ -169,13 +176,63 @@ def _write_memory_atomic(record: MemoryRecord, rebuild: bool) -> None:
 
 
 def write_memory(record: MemoryRecord, rebuild: bool = True) -> MemoryRecord:
-    """写入一条记忆（slug 未给则从 name 生成），随后重建 INDEX。"""
+    """写入一条记忆（slug 未给则从 name 生成），随后重建 INDEX。
+    写入后统一判定是否触发后台整理——任何入口（extract / interview / 其它能力）
+    经此落盘都会走向 consolidate，而不再只有 extract 一条路径能触发。"""
     now = _now_iso()
     record.slug = record.slug or _slugify(record.name)
     record.created_at = record.created_at or now
     record.updated_at = now
     _write_memory_atomic(record, rebuild)
+    _schedule_consolidation_if_needed()
     return record
+
+
+def _schedule_consolidation_if_needed(cfg=None) -> None:
+    """统一收敛触发点：库达标、且不在整理中/冷却期/无 pending 时，调度一次 consolidate。
+
+    事件循环感知：有 running loop → create_task；否则（同步上下文，如 interview tool）
+    起守护线程 asyncio.run 兜底。供 write_memory 及 extract 路径调用。
+    """
+    global _consolidate_pending
+    cfg = cfg or get_agent_config()
+    if _consolidating or _consolidate_pending:
+        return
+    if cfg.longterm_consolidate_cooldown and (
+        time.monotonic() - _last_consolidate_done < cfg.longterm_consolidate_cooldown
+    ):
+        return
+    if len(list_memories()) < cfg.longterm_consolidate_threshold:
+        return
+    _consolidate_pending = True
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        threading.Thread(target=_run_consolidate_in_thread, daemon=True).start()
+    else:
+        asyncio.create_task(_consolidate_task())
+    logger.info("longterm consolidate scheduled (threshold=%d)", cfg.longterm_consolidate_threshold)
+
+
+async def _consolidate_task() -> None:
+    """事件循环侧的一次性整理任务：跑完复位 pending（consolidate 内部再置 _consolidating）。"""
+    global _consolidate_pending
+    try:
+        await consolidate_memories(None)
+    finally:
+        _consolidate_pending = False
+
+
+def _run_consolidate_in_thread() -> None:
+    """无事件循环上下文时（同步调用方）的兜底线程：私有 loop 跑一次整理。"""
+    if _consolidating:
+        return
+    try:
+        asyncio.run(consolidate_memories(None))
+    except Exception as e:  # noqa: BLE001 - 整理失败由 consolidate 内部兜底
+        logger.warning("longterm consolidate thread failed: %s", e)
+    finally:
+        _consolidate_pending = False
 
 
 def delete_memory(slug: str, rebuild: bool = True) -> None:
@@ -389,6 +446,17 @@ def _should_extract_now() -> bool:
     return _extract_round_ctr % n == 0
 
 
+def _emit_memory_meta(mtype: str, payload: dict) -> None:
+    """OBS 观测：往当前 trace 发一条记忆维护元数据（业务量），失败静默不影响主流程。"""
+    try:
+        from obs import emit
+        ev = {"type": mtype}
+        ev.update(payload)
+        emit(ev)
+    except Exception:  # noqa: BLE001 - 观测失败不影响记忆主流程
+        pass
+
+
 async def extract_longterm_memory(session_id: str, last_user_msg: str, reply: str,
                                   context: str = "") -> None:
     """后台任务入口（与 compress_and_save 同款）：提取并落盘，异常不外抛。
@@ -404,19 +472,19 @@ async def extract_longterm_memory(session_id: str, last_user_msg: str, reply: st
         from obs import new_trace
         with new_trace(session_id, kind="longterm_extract"):
             candidates = await _call_extract(last_user_msg, reply, cfg, context)
-            if not candidates:
-                return
             existing = list_memories()
             sink_slugs = {m.slug for m in existing}
             seen_bodies = {_norm(m.body) for m in existing}
             written = 0
+            skipped = 0
             state_cleared = False
-            for cand in candidates:
+            for cand in (candidates or []):
                 rec = _candidate_to_record(cand)
                 ok, reason = should_store_memory(cand, rec, sink_slugs, seen_bodies)
                 if not ok:
                     if rec.type == "state":
                         logger.debug("longterm state skip (%s): %s", rec.name, reason)
+                    skipped += 1
                     continue
                 # state 是「最新情绪快照」：写入前清掉库里旧的情绪记忆，
                 # 无论新条目名是否与前一条相同，都以本轮为准覆盖。
@@ -424,15 +492,18 @@ async def extract_longterm_memory(session_id: str, last_user_msg: str, reply: st
                     _clear_state_memories()
                     sink_slugs = {m.slug for m in list_memories()}
                     state_cleared = True
-                write_memory(rec, rebuild=False)
+                write_memory(rec, rebuild=False)   # 内部已统一判定是否触发整理
                 sink_slugs.add(rec.slug)
                 seen_bodies.add(_norm(rec.body))
                 written += 1
                 logger.info("longterm saved [%s] %s", rec.type, rec.name)
+            _emit_memory_meta("memory_extract", {
+                "candidates": len(candidates or []),
+                "written": written,
+                "skipped": skipped,
+            })
             if written:
                 rebuild_index()
-                if len(existing) + written >= cfg.longterm_consolidate_threshold:
-                    asyncio.create_task(consolidate_memories(session_id))
     except Exception as e:  # noqa: BLE001
         logger.exception("extract_longterm_memory failed: %s", e)
 
@@ -449,6 +520,9 @@ async def _call_extract(user_msg: str, reply: str, cfg, context: str = "") -> li
         "project=稳定的项目/领域事实；reference=外部线索；"
         "state=用户当下持续的情绪/心理状态与情感需求。\n"
         "scope 为 current_task 的（仅本次任务有效）不要给出。\n"
+        "特别注意：当前环境/设备/一次性观察（如摄像头画面拍到什么、此刻几点、"
+        "当下瞬时的心情一句话）不要提取为 user 画像——这些属于当前会话的瞬时状态，"
+        "不应成为跨会话的稳定画像。\n"
         "特别注意：若对话中用户陈述了自己的身份/背景/境况（如\"我是大四应届生\"、"
         "\"我学会计\"），即使没说\"记住\"也属于 user 型持久画像，可识别就要提取。\n"
         "情绪状态方面：若用户流露出正在经历/持续的情绪或心理状态（如职业迷茫、"
@@ -484,7 +558,7 @@ async def _call_extract(user_msg: str, reply: str, cfg, context: str = "") -> li
 
 def _candidate_to_record(cand: dict) -> MemoryRecord:
     now = _now_iso()
-    return MemoryRecord(
+    rec = MemoryRecord(
         name=(cand.get("name") or "").strip()[:80],
         description=(cand.get("description") or "").strip()[:200],
         type=(cand.get("type") or "").strip(),
@@ -492,6 +566,9 @@ def _candidate_to_record(cand: dict) -> MemoryRecord:
         created_at=now,
         updated_at=now,
     )
+    if rec.name:
+        rec.slug = _slugify(rec.name)
+    return rec
 
 
 def should_store_memory(cand: dict, rec: MemoryRecord, sink_slugs: set[str],
@@ -549,15 +626,23 @@ def _extract_json_array(text: str) -> list[Any]:
 # ════════════════════════════════════════════════════════════════════════════
 
 async def consolidate_memories(session_id: str) -> None:
-    """后台整理（与 compress 同款模板：独立 trace、异常不外抛、失败回滚）。"""
+    """后台整理（与 compress 同款模板：独立 trace、异常不外抛、失败回滚）。
+    入口置 _consolidating 防重入；完成（含失败）都推进冷却基准，避免频闪重试。"""
+    global _consolidating, _last_consolidate_done
+    if _consolidating:
+        return
     cfg = get_agent_config()
     try:
         records = list_memories()
         if len(records) < cfg.longterm_consolidate_threshold:
             return
+        _consolidating = True
         from obs import new_trace
         with new_trace(session_id, kind="longterm_consolidate"):
-            cleaned = await _call_consolidate(records)
+            cleaned = await _call_consolidate(records, cfg)
+            _emit_memory_meta("memory_consolidate", {
+                "before": len(records), "after": len(cleaned),
+            })
             if not cleaned:
                 return
             snapshot = _snapshot_files()
@@ -573,10 +658,20 @@ async def consolidate_memories(session_id: str) -> None:
                 raise
     except Exception as e:  # noqa: BLE001
         logger.exception("consolidate_memories failed: %s", e)
+    finally:
+        _last_consolidate_done = time.monotonic()
+        _consolidating = False
 
 
-async def _call_consolidate(records: list[MemoryRecord]) -> list[MemoryRecord]:
-    """调 LLM 把整库去重/合并/应用较新更正，返回清理后的记录列表。"""
+async def _call_consolidate(records: list[MemoryRecord],
+                            cfg=None) -> list[MemoryRecord]:
+    """调 LLM 把整库去重/合并，返回清理后的记录列表（条数硬封顶，保证收敛）。
+
+    keep = longterm_consolidate_keep（须 < threshold）：LLM 一旦照抄不删，
+    这里强制截到 keep 条以内，写回后必 < threshold，从而终结「整理完又触发」空转。
+    """
+    cfg = cfg or get_agent_config()
+    keep = cfg.longterm_consolidate_keep
     from infra_ai import async_call_llm
     present = "\n".join(
         f"- [{r.type}] {r.name}: {r.description}\n  {r.body}" for r in records
@@ -586,7 +681,9 @@ async def _call_consolidate(records: list[MemoryRecord]) -> list[MemoryRecord]:
         "剔除不再有用或已失效的内容。只输出清理后的 JSON 数组，每项格式：\n"
         '{"type": "user|feedback|project|reference|state", "name": "短名", '
         '"description": "一句话概括", "body": "具体内容", "scope": "persistent"}\n'
-        "尽量精简合并，不要丢失仍有用的持久知识；不要新增对话里没有的内容。"
+        f"合并后总条数必须严格 ≤ {keep} 条。含义相近的多条必须并成一条；"
+        "过时/一次性/环境观察直接删除；每条 body 精炼成一句话。"
+        "宁可丢细节，总量也必须 ≤ " + str(keep) + "；不要新增对话里没有的内容。"
         "state 型条目（当前情绪/状态快照）至多保留最新一条。"
     )
     raw = await async_call_llm(
@@ -607,6 +704,11 @@ async def _call_consolidate(records: list[MemoryRecord]) -> list[MemoryRecord]:
         rec = _candidate_to_record(item)
         if rec.type in MEMORY_TYPES and rec.name and rec.body and rec.slug:
             out.append(rec)
+    # 硬封顶：无论 LLM 照抄几条，都截到 keep 以内 → 写回后 <threshold，终结空转
+    keep = max(1, cfg.longterm_consolidate_keep)
+    if len(out) > keep:
+        logger.warning("longterm consolidate LLM returned %d (cap %d), trim", len(out), keep)
+        out = out[:keep]
     return out
 
 

@@ -8,7 +8,10 @@
 ###############################################################################
 
 import asyncio
+import json
 import os
+import tempfile
+import time
 
 from utils.logger import logger
 
@@ -283,19 +286,51 @@ def _format_report(report: dict, n_total: int, n_ans: int) -> str:
 
 
 def _maybe_remember(cfg, st, report: dict) -> None:
-    """把面试总结沉淀进长期记忆（精炼一条；失败静默）。"""
+    """面试总结沉淀：长期记忆只留最新一条（同名覆盖），完整报告归档到能力层 history/。
+
+    不再造时间戳 slug——同名 step→同固定 slug，write_memory 覆盖旧文件，所以同岗位
+    长期记忆永远只有「最近一次复盘」一条，杜绝 interview-review 时间戳文件堆叠；
+    完整历史报告按时间戳落到 interview/history/，由能力层保存、不占长期记忆。
+    """
     try:
+        role = st.get('role') or ''
+        level = st.get('level') or ''
+        # ① 长期记忆：固定 name → 固定 slug，同名覆盖，只留最新一条
         from agent.longterm import write_memory, MemoryRecord
         body = (report.get("summary") or "") + "。"
         if report.get("suggested_topics"):
             body += "建议准备：" + "、".join(report["suggested_topics"])
         write_memory(MemoryRecord(
-            name=f"模拟面试复盘({st.get('role')}·{st.get('level')})",
-            description=f"{st.get('role')}·{st.get('level')} 模拟面试结果",
+            name=f"模拟面试复盘({role}·{level})",
+            description=f"{role}·{level} 模拟面试结果",
             type="project",
             body=body,
-            slug=f"interview-review-{st.get('role', '')}-{__import__('time').strftime('%Y%m%d%H%M')}",
-        ))
+        ), rebuild=True)
+
+        # ② 能力层历史归档：每场一份带时间戳的完整报告，跨场历史不丢
+        base = getattr(cfg, "interview_store_dir", None) or "data/capabilities/interview"
+        hist_dir = os.path.join(base, "history")
+        os.makedirs(hist_dir, exist_ok=True)
+        ts = time.strftime("%Y%m%d%H%M%S")
+        safe = "".join(c for c in f"{role}-{level}" if c.isalnum() or c in "._-") or "interview"
+        path = os.path.join(hist_dir, f"{safe}-{ts}.json")
+        doc = {
+            "role": role,
+            "level": level,
+            "finished_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "report": report,
+        }
+        fd, tmp = tempfile.mkstemp(dir=hist_dir, prefix=".hist-", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(doc, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
     except Exception as e:  # noqa: BLE001 - 记忆沉淀失败不影响主流程
         logger.warning("interview remember failed: %s", e)
 
