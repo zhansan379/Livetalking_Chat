@@ -68,6 +68,10 @@ class MusicPlayer:
         self._configured = False
         self._gain = 0.8            # 当前实际增益（随闪避渐变）
 
+        # ── 在线播放（配合 meting MCP 工具；在线单曲不进本地 _playlist）──
+        self._online = False        # 当前曲目是「在线流」而非本地文件
+        self._online_name: str | None = None
+
         # ── 音量闪避 ──
         self._duck = True
         self._duck_gain = 0.25      # 数字人说话时压低到的比例
@@ -165,6 +169,15 @@ class MusicPlayer:
             v = int(cfg.get("volume", round(self._volume * 100)))
             self._volume = _clamp(v / 100.0, 0.0, 1.0)
             return f"（音量已设为 {int(round(self._volume * 100))}%。）"
+        if action in ("play_online", "在线"):
+            # 在线直播：url 来自 meting MCP 的 url 工具（http/https 流）；不落盘
+            url = cfg.get("url")
+            if not url or not str(url).strip():
+                return ("（在线播放需要可播放链接：请用 mcp_meting_ 系列工具先按平台搜到歌曲、"
+                        "并用 url 工具拿到可播放地址。）")
+            if self._open_url(str(url), str(cfg.get("name") or "")):
+                return self._say(self._now_line())
+            return "（在线音乐播放失败：链接取不到音频或设备不可用。）"
         if action in ("list", "列表", "有啥"):
             return self._cmd_list()
         if action in ("status", "现在", "now", "查"):
@@ -264,16 +277,35 @@ class MusicPlayer:
         self._index = idx
         self._track_path = path
         self._paused = False
+        self._start_ffmpeg(path)
+
+    def _open_url(self, url: str, name: str):
+        """在线直播：直接流式解码一个可播放链接（http/https），不落盘。
+
+        用于与 meting MCP 打通：模型先用 mcp_meting_search 找到歌曲、再用
+        mcp_meting_url 拿可播放链接，这里喂给 ffmpeg 在线解码。在线单曲属于
+        「外来曲目」，不进本地 _playlist（next/prev 仍作用在本地列表上）。
+        """
+        self._close_track()
+        if not url or not str(url).strip():
+            return False
+        self._online = True
+        self._online_name = (name or "").strip() or "在线音乐"
+        self._paused = False
+        return self._start_ffmpeg(str(url))
+
+    def _start_ffmpeg(self, source: str) -> bool:
+        """以 source（本地路径或在线 URL）起一个 ffmpeg→pyaudio 播放子进程。"""
         if not _FFMPEG:
-            logger.warning("music: no ffmpeg on PATH, cannot decode %s", path)
-            return
+            logger.warning("music: no ffmpeg on PATH, cannot decode %s", source)
+            return False
         if self._pyaudio is None:
-            logger.warning("music: pyaudio unavailable, cannot play %s", path)
-            return
+            logger.warning("music: pyaudio unavailable, cannot play %s", source)
+            return False
         try:
             from subprocess import Popen, PIPE
             self._proc = Popen(
-                [_FFMPEG, "-v", "error", "-i", path,
+                [_FFMPEG, "-v", "error", "-i", source,
                  "-f", "s16le", "-ar", str(_SAMPLE_RATE), "-ac", str(_CHANNELS),
                  "-acodec", "pcm_s16le", "-", "-nostdin"],
                 stdout=PIPE,
@@ -284,9 +316,11 @@ class MusicPlayer:
                 output_device_index=self._device if self._device is not None else None,
             )
             self._started_at = _now()
+            return True
         except Exception as e:  # noqa: BLE001
-            logger.warning("music: failed to open %s: %s", path, e)
+            logger.warning("music: failed to open %s: %s", source, e)
             self._close_track()
+            return False
 
     def _close_track(self):
         if self._proc is not None:
@@ -307,8 +341,12 @@ class MusicPlayer:
                 pass
             self._stream = None
         self._track_path = None
+        self._online = False
+        self._online_name = None
 
     def _track_name(self) -> str:
+        if self._online and self._online_name:
+            return self._online_name
         return os.path.basename(self._track_path) if self._track_path else ""
 
     def _now_line(self) -> str:
@@ -352,9 +390,10 @@ class MusicPlayer:
             data = b""
         if not data:
             if self._proc.poll() is not None:
-                # 一首放完 → 顺延下一首（自动连播）
+                # 一首放完 → 自动连播；在线单曲放完即停，不进本地列表
+                was_online = self._online
                 self._close_track()
-                if self._playlist:
+                if not was_online and self._playlist:
                     self._index = (self._index + 1) % len(self._playlist)
                     self._open_track(self._index)
                 return
@@ -422,35 +461,52 @@ def _music_tool_specs() -> list[dict]:
         {
             "name": "play_music",
             "description": (
-                "在【当前这台电脑】上播放本地音乐（背景音乐），支持播放/暂停/继续/停止/"
-                "上一首/下一首/调音量/列清单/查状态。只有当用户表达『放首歌 / 放点音乐 / "
-                "放点背景音乐 / 我想听歌 / 暂停 / 停止 / 切歌 / 音量调大点 / 有什么歌』等"
-                "与听歌有关的意图时才调用；不要因为提到音乐这个词的闲聊就擅自播放。\n"
-                "动作（action）：\n"
-                "  - play（默认）：开始/继续播放。target 可选，填歌名（模糊匹配文件名）或序号"
+                "在【当前这台电脑】上播放音乐（背景音乐），支持播放/暂停/继续/停止/"
+                "上一首/下一首/调音量/列清单/查状态，也支持播放【在线音乐】。只有当用户表达"
+                "『放首歌 / 放点音乐 / 放点背景音乐 / 我想听歌 / 暂停 / 停止 / 切歌 / 音量调大点 "
+                "/ 有什么歌 / 帮我搜首XX听』等与听歌有关的意图时才调用；不要因为提到音乐这个词的闲聊就擅自播放。\n"
+                "本地播放（action=play，默认）：target 可选，填歌名（模糊匹配文件名）或序号"
                 "（1 起，先从 list 看有哪些）；不填则播放当前曲目或目录第一首。\n"
+                "在线播放（action=play_online）：当用户点名的歌本地目录里没有、或明确要播网上某首歌时，"
+                "先按平台用 mcp_meting_search 搜到歌曲拿到 song id，再用 mcp_meting_url 拿可播放链接，"
+                "最后调本工具 action=play_online、url=该链接、name=歌名（可选）。"
+                "注意该链接是短期有效的，拿到后应立即播放。在线单曲放完即停。\n"
+                "动作（action）：\n"
+                "  - play（默认）：开始/继续播放本地或当前曲目。\n"
+                "  - play_online：在线播放。配 url 参数（必填，mcp_meting_url 拿到的可播放链接）、"
+                "name（可选，显示用歌名，如『稻香』）。\n"
                 "  - pause：暂停当前；resume：继续。\n"
                 "  - stop：停止并释放；next：下一首；prev：上一首。\n"
                 "  - volume：调音量，volume 填 0-100 整数（如『音量 30』→ volume=30）。\n"
-                "  - list：列出音乐目录里的歌曲（用这个拿序号/歌名再 play）。\n"
+                "  - list：列出本地音乐目录里的歌曲（用这个拿序号/歌名再 play）。\n"
                 "  - status：查询当前播放状态与音量。\n"
                 "调用后如实把结果（正在播放哪首 / 已暂停 / 已停止 / 已调到的音量 / 目录里有哪些）"
-                "告诉用户。音乐来自本地目录，找不到时如实说明，不要编造歌名。"
+                "告诉用户。本地找不到的音乐与在线播放失败都要如实说明，不要编造歌名或声称已播放。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["play", "pause", "resume", "stop", "next", "prev", "volume", "list", "status"],
-                        "description": "play=播放/继续（默认）；pause=暂停；resume=继续播放；stop=停止；"
-                                       "next=下一首；prev=上一首；volume=调音量（配 volume 参数）；"
-                                       "list=列出音乐目录；status=查播放状态。",
+                        "enum": ["play", "play_online", "pause", "resume", "stop", "next", "prev", "volume", "list", "status"],
+                        "description": "play=播放/继续（默认）；play_online=在线播放（配 url 参数）；"
+                                       "pause=暂停；resume=继续播放；stop=停止；next=下一首；prev=上一首；"
+                                       "volume=调音量（配 volume 参数）；list=列出本地音乐目录；status=查播放状态。",
                     },
                     "target": {
                         "type": "string",
                         "description": "仅 play 使用：要播放的歌名（模糊匹配目录内文件名）或序号（1 起）。"
                                        "留空则播放当前曲目或从第一首开始。",
+                    },
+                    "url": {
+                        "type": "string",
+                        "description": "仅 play_online 使用：可播放的在线链接（http/https），来自"
+                                       "mcp_meting_url 工具。链接短期有效，应立即播放。",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "仅 play_online 使用（可选）：显示用歌名（如『稻香』），"
+                                       "用于查状态/提示时展示；缺省显示『在线音乐』。",
                     },
                     "volume": {
                         "type": "integer",
