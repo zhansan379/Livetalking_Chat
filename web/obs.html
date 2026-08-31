@@ -265,6 +265,19 @@
             font-family: var(--mono); vertical-align: 1px; white-space: nowrap;
         }
         .async-badge svg { width: 10px; height: 10px; }
+        /* TTS 合成折叠面板里的候选诊断行（回退/熔断跳过） */
+        .cand-line {
+            display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap;
+            font-family: var(--mono); font-size: .78rem;
+            padding: 5px 0; border-bottom: 1px dashed var(--border);
+        }
+        .cand-line:last-child { border-bottom: none; }
+        .cand-tag {
+            flex: none; font-size: .64rem; font-weight: 700;
+            padding: 1px 8px; border-radius: 10px; letter-spacing: .3px;
+        }
+        .cand-tag.skip { background: var(--badge-warn-bg); color: var(--badge-warn-fg); }
+        .cand-tag.fall { background: var(--badge-fail-bg); color: var(--badge-fail-fg); }
         .span-meta { color: var(--muted); font-size: .76rem; }
         .span-ms { font-weight: 700; color: var(--accent); margin-left: auto; white-space: nowrap; font-family: var(--mono); }
         .arrow-indicator { color: var(--disc-fg); transition: transform .15s; display: inline-flex; }
@@ -924,12 +937,30 @@ function renderTimeline(evs) {
             playbacksByText[ev.text] = ev;
         }
     }
+    // TTS 候选诊断归组：每个候选都在其句子 txt_to_audio 同步回退流程里、紧贴着对应
+    // tts_call 之前被发出（同一 trace 多句时也如此）。故把时序上位于上一次 tts_call
+    // 之后、本次 tts_call 之前的候选，折叠进该 tts_call 的展开面板，不再单列一行。
+    const subCands = {};            // tts_call.seq -> 该句候选失败/熔断跳过诊断清单
+    {
+        let pending = [];
+        for (const ev of evs) {
+            if (ev.type === 'tts_candidate') pending.push(ev);
+            else if (ev.type === 'tts_call' && pending.length) { subCands[ev.seq] = pending; pending = []; }
+        }
+        // 防御：末尾候选该前提不成立时应已归并进前面的 tts_call；若有残余，补挂最后一条 tts_call。
+        if (pending.length) {
+            for (let i = evs.length - 1; i >= 0; i--) {
+                if (evs[i].type === 'tts_call') { subCands[evs[i].seq] = (subCands[evs[i].seq] || []).concat(pending); break; }
+            }
+        }
+    }
     const shownHeader = {};
     const ICON = { trace_start:'rocket', llm_call:'bot', tool_call:'wrench',
-                   trace_end:'check', asr_call:'mic', tts_call:'volume', tts_candidate:'repeat' };
+                   trace_end:'check', asr_call:'mic', tts_call:'volume' };
     const lines = [];
     for (const ev of evs) {
-        if (ev.type === 'tool_round' || ev.type === 'tts_playback') continue; // 前者已转节标题，送达已并入 tts_call
+        // tool_round 已转节标题；tts_playback 已并入 tts_call；tts_candidate 已折叠进对应的 tts_call 面板。
+        if (ev.type === 'tool_round' || ev.type === 'tts_playback' || ev.type === 'tts_candidate') continue;
         const r = roundOf[ev.parent_id];
         if (r && !shownHeader[ev.parent_id]) {
             shownHeader[ev.parent_id] = true;
@@ -938,7 +969,7 @@ function renderTimeline(evs) {
         let key = ICON[ev.type] || 'dot';
         let cls = '';
         let name = '', meta = '';
-        let detailHtml = '';   // 可展开的完整输入/返回详情（仅 llm_call 填充）
+        let detailHtml = '';   // 可点击展开的面板：llm_call 完整输入/返回；tts_call 候选诊断
         let boundChips = '';   // 本请求绑定的工具子集（能力按态注入后的名单，请求内恒定，顶部亮一次）
         if (ev.type === 'trace_start') {
             name = '请求开始'; meta = '工具模式: ' + (ev.tool_mode ? '开' : '关');
@@ -993,6 +1024,7 @@ function renderTimeline(evs) {
             const delivered = !!pb;
             const delay = delivered && ev.ms != null && pb.ms != null
                 ? ((pb.ms - ev.ms) / 1000).toFixed(1) + 's 送达' : '未收送达';
+            const subC = subCands[ev.seq];
             meta = (ev.provider ? esc(ev.provider) + ' · ' : '') +
                    '音频 ' + fmtMs(ev.audio_ms) +
                    ' · ' + delay +
@@ -1000,23 +1032,12 @@ function renderTimeline(evs) {
                    (ev.retried ? ' · 重试' : '') + (ev.truncated ? ' · 截断' : '') +
                    (ev.success ? '' : ' · ' + esc(ev.fail_reason||'失败')) +
                    (ev.text ? '  「' + esc(ev.text) + '」' : '');
+            // 若本句发生过候选回退/熔断跳过，行变可点：展开面板逐条看候选诊断。
+            if (subC && subC.length) meta += '  · 候选诊断 ' + subC.length + ' 条（点击展开）';
             // 图标颜色：合成失败=红；合成成功但未收送达=橙(警示)；成功且已送达=绿
             cls = !ev.success ? 'err' : (delivered ? 'ok' : 'warn');
-        }
-        else if (ev.type === 'tts_candidate') {
-            // 池层逐候选诊断：失败候选回退（含 reason/engine），或被熔断跳过的候选。
-            // 正常候选成功不在此——成功走 tts_call，避免与正文合成重复刷屏。
-            if (ev.fail_reason === 'circuit_open') {
-                key = 'repeat'; name = 'TTS 候选熔断跳过'; cls = 'warn';
-            } else {
-                key = 'repeat'; name = 'TTS 候选回退'; cls = 'warn';
-            }
-            meta = (ev.engine ? esc(ev.engine) + ' · ' : '') + esc(ev.fail_reason || '失败') +
-                   (ev.err_type ? ' · ' + esc(ev.err_type) : '') +
-                   ' · 尝试 ' + (ev.attempts || 1) +
-                   (ev.retried ? ' · 重试' : '') +
-                   (ev.audio_ms ? ' · 音频 ' + fmtMs(ev.audio_ms) : '') +
-                   (ev.elapsed_ms != null ? ' · ' + fmtMs(ev.elapsed_ms) : '');
+            // 折叠面板：明细就是该句回退/熔断跳过的候选清单（若有）。
+            if (subC && subC.length) detailHtml = subCandsDetailHTML(subC);
         }
         const rowCls = r ? 'span-line round' : 'span-line';
         const clickable = detailHtml ? ' clickable' : '';
@@ -1044,6 +1065,24 @@ function llmDetailHTML(ev) {
         h += '<pre>' + esc(out) + '</pre>';
     }
     if (!h) return '<p class="tl-hint">未记录输入上下文/返回数据（旧事件）</p>';
+    return h;
+}
+
+/* 把某句 TTS 合成折叠面板里逐候选的诊断（回退/熔断跳过）渲染成清单。 */
+function subCandsDetailHTML(cands) {
+    let h = '<h4>候选诊断（回退 / 熔断跳过）</h4>';
+    for (const ev of cands) {
+        const circuit = ev.fail_reason === 'circuit_open';
+        const tag = circuit ? '<span class="cand-tag skip">熔断跳过</span>'
+                            : '<span class="cand-tag fall">回退</span>';
+        const reason = esc(ev.fail_reason || '失败') + (ev.err_type ? ' · ' + esc(ev.err_type) : '');
+        const att = ' · 尝试 ' + (ev.attempts || 1) + (ev.retried ? ' · 重试' : '');
+        const audio = ev.audio_ms ? ' · 音频 ' + fmtMs(ev.audio_ms) : '';
+        const ms = ev.elapsed_ms != null ? ' · ' + fmtMs(ev.elapsed_ms) : '';
+        h += '<div class="cand-line">' + tag +
+             '<span class="span-name">' + esc(ev.engine || '?') + '</span>' +
+             '<span class="span-meta">' + reason + att + audio + ms + '</span></div>';
+    }
     return h;
 }
 
