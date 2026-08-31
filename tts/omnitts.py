@@ -155,6 +155,7 @@ class OmniTTS(BaseTTS):
     def stream_tts(self, audio_stream: Iterator[bytes], msg: tuple[str, dict]):
         text, textevent = msg
         first = True
+        served = 0              # 本句实际送入播放的样本数（→audio_ms 归位）
         last_stream = np.array([], dtype=np.float32)
 
         for chunk in audio_stream:
@@ -189,6 +190,7 @@ class OmniTTS(BaseTTS):
                     stream[idx : idx + self.chunk], eventpoint
                 )
                 idx += self.chunk
+                served += self.chunk
 
             last_stream = stream[idx:]  # remainder for next chunk
 
@@ -198,3 +200,7 @@ class OmniTTS(BaseTTS):
         self.parent.put_audio_frame(
             np.zeros(self.chunk, dtype=np.float32), eventpoint
         )
+
+        # 末尾按实际送入播放的时长刷新 last_tts（首帧已 tts_ok；此处归位真实 audio_ms）
+        if served:
+            self.tts_ok(audio_ms=(served / self.sample_rate) * 1000)

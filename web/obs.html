@@ -590,6 +590,8 @@ function renderStageStats(s) {
         { label: 'TTS 端送达率', value: ((tts.end_serve_rate || 0) * 100).toFixed(1) + '%', sub: (tts.ends_served || 0) + '/' + (tts.calls || 0) + ' 句送抵', color: (tts.end_serve_rate >= 1) ? C_OK : C_ORG, ico: 'volume' },
         { label: 'TTS 重试', value: String(tts.retry_count || 0), sub: '含失败重试', color: C_ORG, ico: 'repeat' },
         { label: 'TTS 截断', value: String(tts.truncation_count || 0), sub: '断流/过短', color: C_ORG, ico: 'alert' },
+        { label: 'TTS 尝试强度', value: (tts.max_attempts || 0) + 'x', sub: '平均 ' + (tts.avg_attempts || 0).toFixed(2) + ' 次/句', color: C_ACC2, ico: 'repeat' },
+        { label: 'TTS 熔断跳过', value: String(tts.circuit_skip || 0), sub: '被熔断的候选', color: C_ORG, ico: 'alert' },
     ];
     const html = cells.map(c => `
         <div class="col-6 col-md-3">
@@ -811,7 +813,7 @@ function renderTimeline(evs) {
     }
     const shownHeader = {};
     const ICON = { trace_start:'rocket', llm_call:'bot', tool_call:'wrench',
-                   trace_end:'check', asr_call:'mic', tts_call:'volume' };
+                   trace_end:'check', asr_call:'mic', tts_call:'volume', tts_candidate:'repeat' };
     const lines = [];
     for (const ev of evs) {
         if (ev.type === 'tool_round' || ev.type === 'tts_playback') continue; // 前者已转节标题，送达已并入 tts_call
@@ -887,6 +889,21 @@ function renderTimeline(evs) {
                    (ev.text ? '  「' + esc(ev.text) + '」' : '');
             // 图标颜色：合成失败=红；合成成功但未收送达=橙(警示)；成功且已送达=绿
             cls = !ev.success ? 'err' : (delivered ? 'ok' : 'warn');
+        }
+        else if (ev.type === 'tts_candidate') {
+            // 池层逐候选诊断：失败候选回退（含 reason/engine），或被熔断跳过的候选。
+            // 正常候选成功不在此——成功走 tts_call，避免与正文合成重复刷屏。
+            if (ev.fail_reason === 'circuit_open') {
+                key = 'repeat'; name = 'TTS 候选熔断跳过'; cls = 'warn';
+            } else {
+                key = 'repeat'; name = 'TTS 候选回退'; cls = 'warn';
+            }
+            meta = (ev.engine ? esc(ev.engine) + ' · ' : '') + esc(ev.fail_reason || '失败') +
+                   (ev.err_type ? ' · ' + esc(ev.err_type) : '') +
+                   ' · 尝试 ' + (ev.attempts || 1) +
+                   (ev.retried ? ' · 重试' : '') +
+                   (ev.audio_ms ? ' · 音频 ' + fmtMs(ev.audio_ms) : '') +
+                   (ev.elapsed_ms != null ? ' · ' + fmtMs(ev.elapsed_ms) : '');
         }
         const rowCls = r ? 'span-line round' : 'span-line';
         const clickable = detailHtml ? ' clickable' : '';

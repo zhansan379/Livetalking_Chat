@@ -67,6 +67,7 @@ class FishTTS(BaseTTS):
     def stream_tts(self,audio_stream,msg:tuple[str, dict]):
         text,textevent = msg
         first = True
+        served = 0              # 本句实际送入播放的样本数（→audio_ms 归位）
         for chunk in audio_stream:
             if chunk is not None and len(chunk)>0:          
                 stream = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32767
@@ -85,6 +86,10 @@ class FishTTS(BaseTTS):
                     self.parent.put_audio_frame(stream[idx:idx+self.chunk],eventpoint)
                     streamlen -= self.chunk
                     idx += self.chunk
+                    served += self.chunk
         eventpoint={'status':'end','text':text}
         eventpoint.update(**textevent) #eventpoint={'status':'end','text':text,'msgevent':textevent}
         self.parent.put_audio_frame(np.zeros(self.chunk,np.float32),eventpoint)
+        # 末尾按实际送入播放的时长刷新 last_tts（首帧已 tts_ok；此处归位真实 audio_ms）
+        if served:
+            self.tts_ok(audio_ms=(served / self.sample_rate) * 1000)

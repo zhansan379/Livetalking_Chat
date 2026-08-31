@@ -15,6 +15,8 @@ class IndexTTS2(BaseTTS):
         self.server_url = opt.TTS_SERVER  # Gradio服务器地址，如 "http://127.0.0.1:7860/"
         self.ref_audio_path = opt.REF_FILE  # 参考音频文件路径
         self.max_tokens = getattr(opt, 'MAX_TOKENS', 120)  # 最大token数
+        # 本句累计送入播放的音频时长（跨多分段的归位 audio_ms）
+        self._audio_ms = 0.0
         
         # 初始化Gradio客户端
         try:
@@ -31,6 +33,7 @@ class IndexTTS2(BaseTTS):
         
     def txt_to_audio(self, msg):
         text, textevent = msg
+        self._audio_ms = 0.0   # 每句归零，跨分段累计
         try:
             # 先进行文本分割
             segments = self.split_text(text)
@@ -180,11 +183,15 @@ class IndexTTS2(BaseTTS):
                 self.parent.put_audio_frame(stream[idx:idx + self.chunk], eventpoint)
                 idx += self.chunk
                 streamlen -= self.chunk
+                self._audio_ms += (self.chunk / self.sample_rate) * 1000.0
             
             # 只在最后一个片段发送end事件
             if is_last:
                 eventpoint = {'status': 'end', 'text': text, 'msgevent': textevent}
                 self.parent.put_audio_frame(np.zeros(self.chunk, np.float32), eventpoint)
+            # 最后一个片段播完：按本句跨分段累计时长刷新 last_tts（归位真实 audio_ms）
+            if is_last and self._audio_ms > 0:
+                self.tts_ok(audio_ms=round(self._audio_ms, 1), attempts=1, retried=False)
             
             # 清理临时文件
             try:

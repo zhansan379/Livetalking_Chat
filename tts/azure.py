@@ -12,6 +12,7 @@ class AzureTTS(BaseTTS):
     def __init__(self, opt, parent):
         super().__init__(opt,parent)
         self.audio_buffer = b''
+        self._served = 0       # 本句实际送入播放的样本数（→audio_ms 归位）
         self.voice = opt.REF_FILE or "zh-CN-XiaoxiaoMultilingualNeural"   # 比如"zh-CN-XiaoxiaoMultilingualNeural"
         speech_key = os.getenv("AZURE_SPEECH_KEY")
         tts_region = os.getenv("AZURE_TTS_REGION")
@@ -32,6 +33,7 @@ class AzureTTS(BaseTTS):
         # self.speech_synthesizer = speechsdk.SpeechSynthesizer(speech_config=self.speech_config, audio_config=None)
         # self.speech_synthesizer.synthesizing.connect(self._on_synthesizing)
 
+        self._served = 0   # 每句归零
         result=self.speech_synthesizer.speak_text(msg_text)
 
         # 延迟指标
@@ -42,6 +44,10 @@ class AzureTTS(BaseTTS):
             speechsdk.PropertyId.SpeechServiceResponse_SynthesisFinishLatencyMs
         ))
         logger.info(f"azure音频生成相关：首字节延迟: {fb_latency} ms, 完成延迟: {fin_latency} ms, result_id: {result.result_id}")
+
+        # 末尾按实际送入播放的时长刷新 last_tts（回调首帧已 tts_ok；此处归位真实 audio_ms）
+        if self.state == State.RUNNING and self._served:
+            self.tts_ok(audio_ms=(self._served / self.sample_rate) * 1000.0)
 
     # === 回调 ===
     def _on_synthesizing(self, evt: speechsdk.SpeechSynthesisEventArgs):
@@ -67,3 +73,4 @@ class AzureTTS(BaseTTS):
                        .astype(np.float32) / 32767.0)
             self.tts_ok()   # 回调推到首个真实音频帧即登记成功
             self.parent.put_audio_frame(frame)
+            self._served += self.CHUNK_SIZE

@@ -58,6 +58,7 @@ class QwenTTS(BaseTTS):
 
         # ---------- 内部状态 ----------
         self._remainder = np.array([], dtype=np.float32)  # 上次重采样后不足一 chunk 的 16kHz 样本
+        self._audio_ms = 0.0                    # 本句累计送入播放的时长（→audio_ms 归位）
         self._response_event = threading.Event()
         self._first_chunk = True          # 当前合成的一句话里的第一个音频包
         self._current_text = ''
@@ -128,6 +129,7 @@ class QwenTTS(BaseTTS):
         self._first_chunk = True
         self._current_text = text
         self._current_textevent = textevent
+        self._audio_ms = 0.0
         self._response_event.clear()
 
         try:
@@ -148,6 +150,10 @@ class QwenTTS(BaseTTS):
 
             # 等待 response.done（音频在回调中流式处理）
             self._response_event.wait(timeout=60)
+
+            # 末尾按实际送入播放的时长刷新 last_tts（回调首帧已 tts_ok；此处归位真实 audio_ms）
+            if self.state == State.RUNNING and self._audio_ms > 0:
+                self.tts_ok(audio_ms=round(self._audio_ms, 1), attempts=1, retried=False)
 
             t_end = time.perf_counter()
             logger.info(f"QwenTTS 合成完成，耗时: {t_end - t_start:.2f}s")
@@ -184,6 +190,7 @@ class QwenTTS(BaseTTS):
             eventpoint.update(**self._current_textevent)
             self.parent.put_audio_frame(frame, eventpoint)
             idx += self.chunk
+            self._audio_ms += (self.chunk / self.sample_rate) * 1000.0
 
         # 不足一 chunk 的留到下次
         self._remainder = samples_16k[idx:] if idx < total else np.array([], dtype=np.float32)
@@ -208,6 +215,7 @@ class QwenTTS(BaseTTS):
                 eventpoint.update(**self._current_textevent)
                 self.parent.put_audio_frame(frame, eventpoint)
                 idx += self.chunk
+                self._audio_ms += (self.chunk / self.sample_rate) * 1000.0
 
         self._remainder = np.array([], dtype=np.float32)
 
