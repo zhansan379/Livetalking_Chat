@@ -236,7 +236,7 @@ def get_action_detail(action_id):
 
 
 def get_action_preview_bytes(action_id, max_side=360):
-    """取动作首帧等比缩略为 PNG bytes（供 GET .../preview）；失败返回 None。"""
+    """取动作中间帧等比缩略为 PNG bytes（供 GET .../preview）；失败返回 None。"""
     d = os.path.join(SAVE_PATH, action_id)
     if not safe_action_token(action_id):
         return None
@@ -244,7 +244,9 @@ def get_action_preview_bytes(action_id, max_side=360):
     if not full_imgs:
         return None
     try:
-        img = Image.open(full_imgs[0])
+        # 中间帧更能代表动作的表情形态，避免首帧常是中性「未进入表情」状态；
+        # 支持全索引（0..n-1）与高位计数，整型索引切片取中点即可。
+        img = Image.open(full_imgs[len(full_imgs) // 2])
         w, h = img.size
         if max(w, h) > max_side:
             scale = max_side / float(max(w, h))
