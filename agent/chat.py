@@ -66,24 +66,35 @@ def notify_reply_start(avatar_session):
     avatar_session.send_msg(json.dumps({"status": "reply_start"}))
 
 
-async def _probe_tone(agent, message: str) -> dict:
+async def _probe_tone(agent, message: str, emotion_names=("happy", "surprised", "sad", "angry")) -> dict:
     """让 LLM 按最近对话判定数字人说话语气 → tts 语气字段（{} = 无特别情绪）。
 
     这是一个廉价的前置"语气探测器"：只输出简短 JSON，作为 datainfo['tts'] 的侧信道
     补充（context_texts 语音指令 / pitch / speech_rate / loudness_rate）。
+    - emotion_names 取当前配置 emotion.names（只有底座的表情才会被放行），LLM 只在
+      这些候选内选或 neutral，避免探测出无底座的表情；
     - 手动传入的 datainfo['tts'] 键优先级更高（上层用 setdefault 合并，不覆盖已存在键）；
     - LLM 判定"无特别情绪"或任何探测失败 → 返回 {}，保持全局 doubao_tone 默认，绝不
       阻塞/劣化正常回复。
     """
+    names = [n for n in (emotion_names or ()) if n and n != "neutral"]
+    if not names:
+        names = ["happy", "surprised", "sad", "angry"]  # 功能配置缺省时的历史候选
+    EmoLabel = {"happy": "高兴", "surprised": "惊讶", "sad": "委屈难过", "angry": "生气"}
+    emo_opts = "".join(f"/{n}({EmoLabel.get(n, n)})" for n in names)
+    label_map = {n: EmoLabel.get(n, n) for n in names}
     ctx = (agent.recent_raw_window(rounds=4) or "").strip()
     prompt = (
-        "你是数字人主播的语气导演。根据下面的最近对话，判断此刻说话应有的语气，"
+        "你是数字人主播的语气与表情导演。根据下面的最近对话，判断此刻说话应有的语气与表情，"
         "只输出一个 JSON 对象（不要输出任何其它文本）。可选键：\n"
         "- context_texts: 数组，自然语言语气指令，如 [\"用温柔平和的语气\"]、[\"用激动兴奋的语气\"]\n"
         "- pitch: 整数 [-12,12]（>0 更明亮高昂，<0 更低沉）\n"
         "- speech_rate: 整数 [-50,100]（100=2倍速）\n"
         "- loudness_rate: 整数 [-50,100]（100=2倍音量）\n"
-        "若对话没有明显情绪，返回 {\"context_texts\": []}。\n\n"
+        "- emotion: 数字人直播画面此刻的表情基调，取且仅取其中之一："
+        f"neutral(中性){emo_opts}。"
+        "没有明显情绪一律返回 neutral。\n"
+        "若对话没有明显情绪，语气键返回 {\"context_texts\": []} 且 emotion 用 neutral。\n\n"
         f"最近对话：\n{ctx}\n\n用户刚刚说：{message}"
     )
     try:
@@ -110,13 +121,17 @@ async def _probe_tone(agent, message: str) -> dict:
                     out[k] = int(v)
                 except (TypeError, ValueError):
                     pass
+        # 表情基调：只放行候选集（与配置 emotion.names 对齐），否则丢弃回中性
+        emot = str(data.get("emotion") or "").strip().lower()
+        if emot == "neutral" or emot in set(names):
+            out["emotion"] = emot
         return out
     except Exception:  # noqa: BLE001 - 语气探测失败不影响回复
         logger.exception("tone probe skipped")
         return {}
 
 
-async def _probe_tone_into(agent, message: str, datainfo: dict):
+async def _probe_tone_into(agent, message: str, datainfo: dict, emotion_names=()):
     """并发版语气探测：先探测，再把结果填进共享 datainfo，供 TTS 线程随句读取。
 
     作为 asyncio.create_task 后台运行，**不阻塞**主回答的 run_tool_loop/流式。
@@ -124,11 +139,17 @@ async def _probe_tone_into(agent, message: str, datainfo: dict):
     datainfo 是贯穿 put_msg_txt→TTS 工作线程的同一 dict 引用；只要在某句实际合成前
     填好 datainfo["tts"]，该句即带上语气（尽力而为：tone 慢/失败时前句用全局默认）。
     """
-    tone = await _probe_tone(agent, message)
+    tone = await _probe_tone(agent, message, emotion_names=emotion_names)
     if tone:
+        # 语气键 → datainfo['tts']（供 TTS 引擎用；非 doubao 亦无副作用）
         _tts = datainfo.setdefault("tts", {})
         for _k, _v in tone.items():
+            if _k == "emotion":
+                continue  # 表情是顶层视觉诉求，不下塞到 tts 语气里
             _tts.setdefault(_k, _v)
+        # 表情基调 → datainfo['emotion']（顶层；随 utterance 到渲染线程并走 SSE）
+        if tone.get("emotion"):
+            datainfo.setdefault("emotion", tone["emotion"])
 
 
 async def stream_llm_chat(avatar_session, session_id: str, message: str,
@@ -212,22 +233,28 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str,
         datainfo["_obs"] = {"trace_id": _tid, "session_id": session_id, "parent_id": _tid}
     notify_reply_start(avatar_session)  # 新一轮回答开始，前端清空字幕后逐句追加
 
-    # ── LLM 语气钩子（LLM 自动驱动的语气调整）────────────────────────────
-    # 仅 doubao TTS 且 doubao_tone.llm_tone 开启时生效：触发一次廉价语气探测，
-    # 把 LLM 判定的语气指令填进 datainfo['tts']（手动传入的键优先 setdefault）。
-    # 并发执行：以 asyncio.create_task 启动，后台随句把结果填进共享 datainfo，
-    # **不阻塞**下方主回答（run_tool_loop/流式）。任务内部已 try/except 兜底，绝不向
-    # 主链路抛异常；事件循环常驻，fire-and-forget 由 add_done_callback 兜底记录。
+    # ── LLM 语气/表情钩子（LLM 自动驱动的语气调整 + 表情编排）─────────────
+    # 触发条件（满足任一即探测）：doubao TTS 且 doubao_tone.llm_tone 开启（供 TTS 语气）；
+    # 或 表情动作 emotion.enabled 开启（供渲染层切基地帧——纯视觉诉求，不该被 TTS 引擎绑架）。
+    # 探测结果填共享 datainfo：语气键进 datainfo['tts']，表情基调进 datainfo['emotion']。
+    # 并发执行：以 asyncio.create_task 启动，后台随句填结果，**不阻塞**主回答；
+    # 任务内部已 try/except 兜底，绝不向主链路抛异常，fire-and-forget 由回调兜底记录。
     try:
         _opt = getattr(avatar_session, "opt", None)
-        _tone_cfg = getattr(_opt, "doubao_tone", None)
-        if (_opt and getattr(_opt, "tts", "") == "doubao"
-                and isinstance(_tone_cfg, dict) and _tone_cfg.get("llm_tone")):
-            _tone_task = asyncio.create_task(_probe_tone_into(agent, message, datainfo))
+        _tone_cfg = getattr(_opt, "doubao_tone", None) or {}
+        _emotion_cfg = getattr(_opt, "emotion", None) or {}
+        _want_tone = (_opt and getattr(_opt, "tts", "") == "doubao"
+                      and isinstance(_tone_cfg, dict) and _tone_cfg.get("llm_tone"))
+        _want_emotion = bool(_emotion_cfg.get("enabled"))
+        if _want_tone or _want_emotion:
+            # 只把有底座的候选表情名单交给探测器，LLM 不会输出无底座的情绪（如占位 happy）。
+            _emo_names = tuple(_emotion_cfg.get("names") or []) if _want_emotion else ()
+            _tone_task = asyncio.create_task(
+                _probe_tone_into(agent, message, datainfo, emotion_names=_emo_names))
             _tone_task.add_done_callback(
                 lambda t: t.exception() if not t.cancelled() else None)
-    except Exception as e:  # noqa: BLE001 - 语气钩子失败不影响回复
-        logger.exception("llm tone hook exception: %s", e)
+    except Exception as e:  # noqa: BLE001 - 探测钩子失败不影响回复
+        logger.exception("llm tone/emotion hook exception: %s", e)
 
     reply = None
     tr_success = True

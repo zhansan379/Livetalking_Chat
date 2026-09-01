@@ -66,8 +66,8 @@ def load_model():
     audio_processor = Audio2Feature(model_path="./models/whisper")
     return vae, unet, pe, timesteps, audio_processor
 
-def load_avatar(avatar_id):
-    avatar_path = f"./data/avatars/{avatar_id}"
+def load_avatar(avatar_id, root='data/avatars'):
+    avatar_path = f"./{root}/{avatar_id}"
     full_imgs_path = f"{avatar_path}/full_imgs" 
     coords_path = f"{avatar_path}/coords.pkl"
     latents_out_path= f"{avatar_path}/latents.pt"
@@ -125,6 +125,14 @@ class MuseReal(BaseAvatar):
 
         self.asr = WhisperASR(opt,self,self.audio_processor)
         self.asr.warm_up()
+
+        # ── 表情动作：快照默认基地序列 + 提供表情底座加载器 ──────────────
+        self._snapshot_neutral_cycles()
+        def _load_cycle(e, root='data/actions'):
+            fr, mk, co, mco, lat = load_avatar(e, root=root)
+            return {"frame_list_cycle": fr, "mask_list_cycle": mk, "coord_list_cycle": co,
+                    "mask_coords_list_cycle": mco, "input_latent_list_cycle": lat}
+        self._load_cycle = _load_cycle
     
 
     @torch.no_grad()
@@ -153,13 +161,14 @@ class MuseReal(BaseAvatar):
         return pred
 
     def paste_back_frame(self,pred_frame,idx:int):
-        bbox = self.coord_list_cycle[idx]
-        ori_frame = self.frame_list_cycle[idx].copy()
+        # 防御：表情切换瞬间索引可能越界，逐列表取模钳回（正常时各列表同长，无害）。
+        bbox = self.coord_list_cycle[idx % max(1, len(self.coord_list_cycle))]
+        ori_frame = self.frame_list_cycle[idx % max(1, len(self.frame_list_cycle))].copy()
         x1, y1, x2, y2 = bbox
 
         res_frame = cv2.resize(pred_frame.astype(np.uint8),(x2-x1,y2-y1))
-        mask = self.mask_list_cycle[idx]
-        mask_crop_box = self.mask_coords_list_cycle[idx]
+        mask = self.mask_list_cycle[idx % max(1, len(self.mask_list_cycle))]
+        mask_crop_box = self.mask_coords_list_cycle[idx % max(1, len(self.mask_coords_list_cycle))]
 
         combine_frame = get_image_blending(ori_frame,res_frame,bbox,mask,mask_crop_box)
         return combine_frame

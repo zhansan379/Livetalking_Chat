@@ -61,6 +61,12 @@ class AudioFrameData:
     userdata: dict = field(default_factory=dict)
 
 class BaseAvatar:
+    # 各 sub-avatar 会存在这些「说话基地序列」cycle 成员（不存在该模型的属性会自行跳过）。
+    # 表情动作 = 把这些成员整体换到另一套底座序列（data/actions/<emotion>/），口型照常贴脸生成。
+    _CYCLE_ATTRS = ("frame_list_cycle", "coord_list_cycle",
+                    "mask_list_cycle", "mask_coords_list_cycle",
+                    "input_latent_list_cycle", "face_list_cycle")
+
     def __init__(self, opt):
         self.opt = opt
         self.sample_rate = 16000
@@ -88,6 +94,19 @@ class BaseAvatar:
         self.msgqueues = []
         # self.custom_opt = {}
         self.__loadcustom()
+
+        # ── 表情动作（说话时按情绪切基地帧：换一套基地序列，而非抢插）────
+        # emotion=config.yaml 的 emotion 块；None/未 enabled = 功能关，行为回退现状。
+        self.emotion = getattr(opt, 'emotion', None) or None
+        self._neutral_cycles = {}      # 默认基地序列快照（sub-avatar init 尾部调用 _snapshot_neutral_cycles）
+        self._emotion_cache = {}       # emotion → cycle dict（懒加载；加载失败记为 None 容错）
+        self._cur_emotion = None       # 当前生效表情；None = 中性默认形象
+        self._last_speech_ts = 0.0     # 最近说话帧时刻（持续静音超时才回中性，避免句间小间隔抖动）
+        # 底座溶解过渡：进出表情都做 ~0.3s addWeighted 渐变，避免一帧硬切（不同形象间
+        # 呈现为形变溶解；同形象则是最自然的情绪渐变）。由 process_frames 检测 _cur_emotion
+        # 变化后驱动。
+        self._emo_transition_at = 0.0   # 最近一次底座切换时刻（render 侧检测到后刷新）
+        self._emo_alpha_from = None     # 切换前最后一帧输出（过渡起点）
 
         self.batch_size = opt.batch_size
         self.res_frame_queue = Queue(self.batch_size*2)
@@ -351,6 +370,79 @@ class BaseAvatar:
             self.custom_audio_index[audiotype] = 0
             self.custom_index[audiotype] = 0
 
+    # ==================== 表情动作：基地序列切换器 ====================
+    # 原理（docs/动作视频作为说话基地帧.md）：数字人只重生成脸部一块、再贴回基地全身帧。
+    # 「表情动作」= 把当前说话的基地序列整体换到另一套表情底座视频的 cycle，
+    # 口型照常由 inference_batch/paste_back_frame 生成并贴到该表情帧上 → 边说话边带表情。
+    # set_emotion 由推理线程在算预测前触发（见 inference 的音频批循环），并清空渲染队列、
+    # 归零 index，保证「算预测的底座 = 贴回的底座」，切换瞬间不错位。多个 cycle 成员逐条
+    # 交换、不追求组级原子性：极端帧读到新旧混合，下一帧即自愈（长度已pad齐并由
+    # mirror_index 归到各自 cycle 长度内）。
+
+    def cycle_attrs(self):
+        """返回本模型实际存在的 cycle 属性名。"""
+        return [a for a in self._CYCLE_ATTRS if hasattr(self, a)]
+
+    def _snapshot_neutral_cycles(self):
+        """快照当前（默认形象）基地序列，供 set_emotion(None) 回中性时恢复。"""
+        self._neutral_cycles = {}
+        for a in self.cycle_attrs():
+            self._neutral_cycles[a] = getattr(self, a)
+        logger.info("emotion: snapshot neutral cycles -> %s", list(self._neutral_cycles))
+
+    def _load_emotion_cycle(self, emotion):
+        """从 data/actions/<emotion>/ 懒加载一套表情底座 cycle dict；失败返回 None（不回中性）。"""
+        loader = getattr(self, "_load_cycle", None)  # sub-avatar 提供
+        if not loader:
+            return None
+        try:
+            payload = loader(emotion, root="data/actions")
+            if not payload:
+                return None
+            d = {a: payload[a] for a in self.cycle_attrs() if payload.get(a) is not None}
+            return d or None
+        except Exception:  # noqa: BLE001 - 表情底座缺失/损坏不影响主说话链路
+            logger.exception("emotion: load cycle %s failed", emotion)
+            return None
+
+    def set_emotion(self, emotion):
+        """把当前说话的基地序列切成指定表情；None/neutral 恢复默认形象（功能关闭时静默返回）。"""
+        if not getattr(self, "emotion", None) or not self.emotion.get("enabled"):
+            return
+        if emotion in (None, "", "neutral"):
+            if self._cur_emotion is not None:
+                self._cur_emotion = None
+                for a, v in self._neutral_cycles.items():
+                    setattr(self, a, v)
+                logger.info("emotion: reset -> neutral")
+            return
+        names = self.emotion.get("names") or []
+        if emotion not in names:
+            return  # 不在候选表情集，保持现状
+        if emotion == self._cur_emotion:
+            return
+        if emotion not in self._emotion_cache:
+            self._emotion_cache[emotion] = self._load_emotion_cycle(emotion)
+        payload = self._emotion_cache.get(emotion)
+        if not payload:
+            logger.warning("emotion: %s 无可用底座序列，保持当前", emotion)
+            return
+        self._cur_emotion = emotion
+        for a, v in payload.items():
+            setattr(self, a, v)
+        n = len(payload.get("frame_list_cycle") or [])
+        logger.info("emotion: switch -> %s (base frames=%d)", emotion, n)
+
+    def _drain_res_queue(self):
+        """清空渲染队列：切换底座时丢弃用旧底座算出的在途预测，避免残留错位帧。"""
+        if not getattr(self, "res_frame_queue", None):
+            return
+        try:
+            while True:
+                self.res_frame_queue.get_nowait()
+        except queue.Empty:
+            pass
+
     # ========================== 核心渲染及 Pipeline 桥接 ==========================
     def get_avatar_length(self):
         if hasattr(self, 'frame_list_cycle'):
@@ -387,6 +479,28 @@ class BaseAvatar:
              # 检测状态变化
             current_speaking = not is_all_silence
 
+             # ── 表情切换：在推理前按本批音频携带的 emotion 定底座 ──────────────
+            # 必须切在这里（推理线程、算预测之前），保证「用哪套底座算出的预测，就用哪套
+            # 底座贴回」。若切在 process_frames（渲染线程），推理已用旧底座算出一批预测、
+            # 贴回时却用新底座 → 人脸位置错位。整轮每句携带同一 emotion，set_emotion 按
+            # _cur_emotion 去重，不会反复切换。
+            _spk = not is_all_silence
+            if _spk:
+                emo = None
+                for _af in audio_frames:
+                    if _af.type == 0 and _af.userdata:
+                        emo = _af.userdata.get("emotion") or None
+                        if emo:
+                            break
+                if emo and emo != getattr(self, "_cur_emotion", None):
+                    self._drain_res_queue()   # 清掉用旧底座产出的在途预测，避免残留错位帧
+                    index = 0                 # 新底座从头编排帧
+                    self.set_emotion(emo)
+                self._last_speech_ts = time.time()
+            elif getattr(self, "_cur_emotion", None) is not None \
+                    and time.time() - getattr(self, "_last_speech_ts", 0.0) > 1.2:
+                self.set_emotion(None)        # 持续静音 → 回中性
+
             if is_all_silence: #全为静音数据，只需要取fullimg，不需要推理
                 for i in range(self.batch_size):
                     idx = mirror_index(length, index)
@@ -416,9 +530,13 @@ class BaseAvatar:
 
     def process_frames(self,quit_event):
         enable_transition = False  # 设置为False禁用过渡效果，True启用
-        
+
         _last_speaking = False
         _transition_start = time.time()
+        # 底座溶解过渡（进出表情）：检测 _cur_emotion 变化，以切换前最后一帧为起点渐变
+        _EMO_TR_DUR = 0.3          # 溶解时长(秒)
+        _prev_emotion = getattr(self, "_cur_emotion", None)
+        _last_out = None
         if enable_transition:
             _transition_duration = 0.1  # 过渡时间
             _last_silent_frame = None  # 静音帧缓存
@@ -448,7 +566,9 @@ class BaseAvatar:
                     target_frame = self.custom_img_cycle[audiotype][mirindex]
                     self.custom_index[audiotype] += 1
                 else:
-                    target_frame = self.frame_list_cycle[idx]
+                    # 防御：表情切换过程中，队列里由推理线程按中性帧数编好的 idx，
+                    # 可能大于表情底座的帧数；取模钳回，宁可自愈取错一帧也不让线程崩。
+                    target_frame = self.frame_list_cycle[idx % max(1, len(self.frame_list_cycle))]
                 
                 if enable_transition:
                     # 说话→静音过渡
@@ -479,6 +599,26 @@ class BaseAvatar:
                     _last_speaking_frame = combine_frame.copy()
                 else:
                     combine_frame = current_frame
+
+            # ── 底座溶解过渡：进出表情/回中性时，一帧硬切改为 ~0.3s 渐变 ──────
+            # 底座由推理线程 set_emotion 切换（_cur_emotion 变化）；这里以切换前最后
+            # 一帧输出 _last_out 为起点，对新底座帧 addWeighted 渐近。切换后 _drain 清
+            # 过队列，_last_out 几乎总是指向旧底座的帧，方向正确。
+            cur_emotion = getattr(self, "_cur_emotion", None)
+            if cur_emotion != _prev_emotion:
+                if _last_out is not None:
+                    self._emo_alpha_from = _last_out
+                    self._emo_transition_at = time.time()
+                else:
+                    self._emo_alpha_from = None
+                _prev_emotion = cur_emotion
+            if getattr(self, "_emo_alpha_from", None) is not None:
+                a = (time.time() - self._emo_transition_at) / _EMO_TR_DUR
+                if a < 1.0:
+                    combine_frame = cv2.addWeighted(self._emo_alpha_from, 1 - a, combine_frame, a, 0)
+                else:
+                    self._emo_alpha_from = None  # 过渡完成
+            _last_out = combine_frame.copy() if combine_frame is not None else None
 
             # 使用统一输出接口推送视频帧
             self.output.push_video_frame(combine_frame)
