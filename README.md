@@ -12,8 +12,10 @@
 
 ## 🖼️ 界面长这样
 
-<!-- 图片位 1：在这里插入「主对话界面」整屏截图，展示数字人形象 + 底部输入框 + 字幕。建议宽 2549 高 1191。 -->
-> 🖼️ **【图片：主对话界面截图】** 有一张可先放这儿，没有就先空着。
+
+
+https://github.com/user-attachments/assets/36e5465a-6636-48ef-8d5a-8a11c7ace7df
+
 
 ---
 
@@ -182,11 +184,11 @@ http://<你的服务器IP>:8010/
 
 ## 🖼️ 更多功能截图
 
-<!-- 图片位 2：在这里插入「管理后台 admin.html」截图。 -->
-> 🖼️ **【图片：管理后台截图】** 可放这儿，没有就先空着。
+<img width="2549" height="1191" alt="image" src="https://github.com/user-attachments/assets/c355c3fd-5018-47eb-be5b-a7cba08ca885" />
 
-<!-- 图片位 3：在这里插入「摄像头看用户 / 打断说话」等功能的演示截图。 -->
-> 🖼️ **【图片：能力演示截图】** 可放这儿，没有就先空着。
+<img width="2549" height="1191" alt="image" src="https://github.com/user-attachments/assets/cc8cdcfd-a893-4917-bf43-a850e310ad2e" />
+
+<img width="2549" height="1191" alt="image" src="https://github.com/user-attachments/assets/266dec2e-bd3c-4e0e-8493-78e91ed9ca3a" />
 
 ---
 
