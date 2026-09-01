@@ -680,6 +680,7 @@
     var bargeArmed = false;          // onSpeechStart 只是能量触发：先「武装」，确认是真声才真打断
     var bargeWatchdog = null;        // 限时窗口，窗口内未确认成真声则撤销武装（防误触破坏未播句）
     var BARGE_WATCHDOG_MS = 700;     // 从能量触发到 VAD 确认「这是真说话」的最长等待
+    var interruptedNow = false;      // 本次打断是否真的发出了 interruptAvatar；配合空转写 → 补播被打断句
     var wakeOn = false;              // 关键词唤醒开关（底栏「唤醒」按钮按下）
     var wakeArmed = false;           // 是否正等待唤醒词（收到后端 wake 后置 false 进入正常通话）
     var wakeKeyword = '';            // 开启词文本（来自设置 #wakeword）
@@ -1059,6 +1060,7 @@
                     if (bargeWatchdog) { clearTimeout(bargeWatchdog); bargeWatchdog = null; }
                     bargeArmed = false;
                     if (bargeInEnabled() && avatarSpeaking && Date.now() > suppressUntil) {
+                        interruptedNow = true;   // 真的发了打断 → 若后面转写为空说明是假打断，须补播
                         interruptAvatar();
                         suppressUntil = Date.now() + suppressMs;
                         setCallStatus('已打断数字人...', 'interrupt');
@@ -1149,6 +1151,15 @@
         }).catch(function (er) { console.error('interrupt error:', er); });
     }
 
+    // 假打断补播：刚才 interruptAvatar 掐掉的句子，若其后转写为空（VAD 误判真声、用户并没说话），
+    // 让数字人把没说完的继续讲完，避免关键结尾（总结/推荐）被误触吞掉。
+    function resumeTalk() {
+        fetch('/resume_talk', {
+            body: JSON.stringify({ sessionid: getSessionId() }),
+            headers: { 'Content-Type': 'application/json' }, method: 'POST'
+        }).catch(function (er) { console.error('resume error:', er); });
+    }
+
     var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
 
     // 顺序处理识别队列：识别 → LLM 对话（interrupt:true 覆盖旧回复）
@@ -1161,8 +1172,12 @@
             var r = await runTranscription(audio);
             if (!r.text) {
                 setCallStatus('未识别到有效内容', 'warn');
+                // 空转写 = 这次打断是假的（VAD 误判，用户并没真说话）→ 补播被打断的那句。
+                // 真打断（有转写）走 sendChat 生成新回复，无需补播；若刚好也空则保守不补。
+                if (interruptedNow) { interruptedNow = false; resumeTalk(); }
                 continue;
             }
+            interruptedNow = false;   // 真话轮到：本次打断已被真实发言消费
             document.getElementById('msg').value = r.text;   // 输入框显示识别结果
             setCallStatus('识别 → 请稍候...', 'thinking');
             await sendChat(r.text, r.trace_id);
@@ -1351,6 +1366,7 @@
         utteranceQueue = [];
         draining = false;
         bargeArmed = false;
+        interruptedNow = false;
         if (bargeWatchdog) { clearTimeout(bargeWatchdog); bargeWatchdog = null; }
         wakeOn = false; wakeArmed = false;
         _persistWakeOn();          // 记住「唤醒已关闭」

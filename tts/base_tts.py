@@ -33,6 +33,11 @@ class BaseTTS:
         # 单次合成的成败登记，由 tts_ok / tts_fail 填充，_run_tts_observed 消费。
         # 子类只在自然分支点各调一行；未登记即按失败处理（见 _run_tts_observed）。
         self.last_tts = None
+        # 正在合成的句子文本（仅在 _run_tts_observed 合成期间非 None）——
+        # 供 flush_talk 捕捉「被打断未播完」的内容，假打断后可补播。
+        self._current_text = None
+        # 最近一次被打断时截留下的待补播载荷 {text, at}；新回复会清空（视为取代）。
+        self._interrupted = None
 
     # ── 结果登记：provider 在「成败分界」处任调其一，统一写入 last_tts ──
     # 相比散落的手拼字典，这里收敛结构、并提供缺省语义（不调 = 未归类失败），
@@ -56,9 +61,39 @@ class BaseTTS:
                          "attempts": attempts, "retried": retried, "truncated": truncated}
 
     def flush_talk(self):
+        # 清队前先捕捉「被打断未播完」的内容：正在合成的半句 + 排队没轮到/没播完的句。
+        # 假打断（VAD 误触发、空转写）时由 resume_interrupted 把这段补播回去。
+        current = getattr(self, "_current_text", None)
+        if current is not None:
+            current = current.strip() or None
+        try:
+            pending = [it[0] for it in list(self.msgqueue.queue)
+                       if it and isinstance(it[0], str) and it[0].strip()]
+        except Exception:  # noqa: BLE001 - 队列内容异常按无排队处理，不影响打断
+            pending = []
+        payload_text = current if current else ""
+        if pending:
+            tail = payload_text + "\n" if current else ""
+            payload_text = tail + "\n".join(pending)
+        self._interrupted = {"text": payload_text, "at": time.time()} if payload_text else None
+        self._current_text = None
+
         self._epoch += 1
         self.msgqueue.queue.clear()
         self.state = State.PAUSE
+
+    def resume_interrupted(self) -> bool:
+        """把最近一次被打断未播完的内容重新入队播完；无待补播则返回 False。
+
+        只被「打断后证实是假打断（空转写）」的路径调用；真打断后新回复会取代旧载荷。
+        """
+        if not self._interrupted or not self._interrupted.get("text"):
+            return False
+        text = self._interrupted["text"]
+        self._interrupted = None
+        self.put_msg_txt(text)   # 用当前代际入队 → 补播这段
+        logger.info("[TTS] 补播被打断文本 %d 字：%r", len(text), text[:30])
+        return True
 
     def put_msg_txt(self, msg: str, datainfo: dict = {}):
         if len(msg) > 0:
@@ -102,6 +137,7 @@ class BaseTTS:
         text, textevent = msg
         obs = (textevent or {}).get("_obs")
         _t0 = time.time()
+        self._current_text = text   # 标记「正在合成这句」→ flush 打断时可捕捉
         try:
             self.txt_to_audio(msg)
             lt = getattr(self, "last_tts", None)
@@ -122,6 +158,7 @@ class BaseTTS:
             audio, att, trun, retried = 0, 1, False, False
         finally:
             self.last_tts = None  # 消费掉，避免残留污染下一句
+            self._current_text = None  # 本句处理完，不再标记为「正在合成」
         if not obs:
             return
         try:

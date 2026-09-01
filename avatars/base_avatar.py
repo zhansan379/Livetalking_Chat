@@ -147,7 +147,23 @@ class BaseAvatar:
     # 如果系统没有使用 pipeline，或者为了向后兼容原来的 ttsreal.py
     def put_msg_txt(self, msg, datainfo:dict={}):
         if hasattr(self, 'tts'):
+            # 新回复会取代旧的「被打断待补播」载荷：真打断后若已生成新回复，
+            # 就不该再补播过期句子（避免把真实抢话后的旧话补回去）。
+            try:
+                if getattr(self.tts, "_interrupted", None) is not None:
+                    self.tts._interrupted = None
+            except Exception:  # noqa: BLE001 - 清标记失败不影响入队
+                pass
             self.tts.put_msg_txt(msg, datainfo)
+
+    def resume_talk(self) -> bool:
+        """补播最近一次被打断未播完的内容（假打断 / 空转写后用）。有补播返回 True。"""
+        if hasattr(self, 'tts') and hasattr(self.tts, 'resume_interrupted'):
+            try:
+                return bool(self.tts.resume_interrupted())
+            except Exception as e:  # noqa: BLE001 - 补播失败不崩
+                logger.warning("avatar resume_talk failed: %s", e)
+        return False
     
     def put_audio_frame(self, audio_chunk:NDArray[np.float32], datainfo:dict={}): # 16khz 20ms pcm
         if hasattr(self, 'asr'):

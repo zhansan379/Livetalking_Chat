@@ -161,6 +161,17 @@ class TTSPool(BaseTTS):
                     )
                 return
 
+            # 用户打断（barge-in）：这不是引擎故障，是外部要求停嘴。既不该熔断污染
+            # 健康状态，也不该拿其它候选重合成同一句（此刻用户正说话，重合成无意义），
+            # 更不该被报成 all_tts_candidates_failed 吞句。直接以「被打断」终态返回。
+            if lt.get("fail_reason") == "barge_in":
+                self.last_tts = {
+                    **lt, "success": False,
+                    "attempts": total_attempts, "retried": any_retried or tried > 1,
+                    "provider": cand.engine,
+                }
+                return
+
             self._health.mark_failure(cand.id)
             logger.warning(
                 "[TTS] 候选 %s 失败(%s, audio_ms=%s)，回退下一候选",

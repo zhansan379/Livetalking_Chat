@@ -71,6 +71,36 @@ def _make_pool(cands: list[dict], failed_first=True, ok_second=True,
     return pool
 
 
+# ── 0) 打断捕捉 + 补播（假打断场景）─────────────────────────────────────────
+def test_base_tts_flush_captures_and_resume():
+    from tts.base_tts import BaseTTS
+    tts = BaseTTS(SimpleNamespace(fps=25), FakeParent())
+    # 正在合成的半句 + 排队没播的句 → flush 应整段截留下来
+    tts._current_text = "被打断的半句"
+    tts.put_msg_txt("排队没播到的一句")
+    tts.put_msg_txt("还有一句")
+    tts.flush_talk()
+    assert tts._interrupted is not None
+    assert "被打断的半句" in tts._interrupted["text"]
+    assert "排队没播到的一句" in tts._interrupted["text"]
+    assert "还有一句" in tts._interrupted["text"]
+    assert tts.msgqueue.empty()          # 真正停嘴：队列已清
+    # resume → 把截留内容重新入队播完
+    assert tts.resume_interrupted() is True
+    assert not tts.msgqueue.empty()      # 已补播回队
+    # 补播后载荷清空，二次 resume 无内容
+    assert tts.resume_interrupted() is False
+    assert tts._interrupted is None
+
+def test_base_tts_flush_idle_captures_nothing():
+    # 没在说话、队列也空时 flush → 不产生待补播载荷
+    from tts.base_tts import BaseTTS
+    tts = BaseTTS(SimpleNamespace(fps=25), FakeParent())
+    tts.flush_talk()
+    assert tts._interrupted is None
+    assert tts.resume_interrupted() is False
+
+
 # ── 1) utils/health_store 三态熔断 ──────────────────────────────────────────
 def test_health_store_trip_and_recover():
     hs = HealthStore(failure_threshold=2, open_duration_sec=5)
@@ -160,6 +190,26 @@ def test_all_candidates_failed():
     assert pool.last_tts["success"] is False
     assert pool.last_tts["fail_reason"] == "all_tts_candidates_failed"
     assert pool.last_tts["attempts"] == 2
+
+
+def test_barge_in_is_not_an_engine_failure():
+    # 用户打断（barge_in）不是引擎故障：应在首个 barge_in 候选处停住，不落回其它
+    # 候选重合成（用户正说话，重合成无意义），不被报成 all_tts_candidates_failed，
+    # 也不扰动熔断器。
+    pool = _make_pool([
+        {"id": "edgeA", "engine": "edgeA", "priority": 1, "enabled": True, "params": {}},
+        {"id": "okB", "engine": "okB", "priority": 2, "enabled": True, "params": {}},
+    ], failed_first=False, ok_second=True)
+    pool._engines["edgeA"]._success = False
+    pool._engines["edgeA"]._fail_reason = "barge_in"
+
+    pool.txt_to_audio(("被打断的一句", {}))
+
+    assert pool.last_tts["success"] is False
+    assert pool.last_tts["fail_reason"] == "barge_in"   # 不再是 all_tts_candidates_failed
+    assert pool.last_tts["provider"] == "edgeA"
+    assert pool._engines["okB"].calls == 0              # 不落回其它候选
+    assert pool._health.get_state("edgeA") == CircuitState.CLOSED  # 熔断不受扰动
 
 
 def test_min_audio_truncation_triggers_fallback():

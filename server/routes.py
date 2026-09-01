@@ -80,6 +80,23 @@ async def interrupt_talk(request):
         return json_error(str(e))
 
 
+async def resume_talk(request):
+    """补播最近一次被打断未播完的内容（前端在「打断后转写为空=假打断」时调用）。"""
+    try:
+        params = await request.json()
+        sessionid = params.get('sessionid', '')
+        avatar_session = get_session(request, sessionid)
+        if avatar_session is None:
+            return json_error("session not found")
+        resumed = bool(avatar_session.resume_talk())
+        if resumed:
+            notify_reply_start(avatar_session)
+        return json_ok(data={"resumed": resumed})
+    except Exception as e:
+        logger.exception('resume_talk exception:')
+        return json_error(str(e))
+
+
 async def humanaudio(request):
     """上传音频文件"""
     try:
@@ -377,6 +394,7 @@ def setup_routes(app):
     app.router.add_post("/set_audiotype", set_audiotype)
     app.router.add_post("/record", record)
     app.router.add_post("/interrupt_talk", interrupt_talk)
+    app.router.add_post("/resume_talk", resume_talk)
     app.router.add_post("/is_speaking", is_speaking)
     app.router.add_get("/api/admin/config", admin_config)
     app.router.add_get("/api/admin/sessions", admin_sessions)
