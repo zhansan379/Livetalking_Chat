@@ -35,7 +35,7 @@ class InterviewStateTest(unittest.TestCase):
         # 只留一个离散 trivia 段，两题走完即终局，便于断言
         cfg.capabilities["interview"] = {
             "enabled": True, "store_dir": self._tmp,
-            "default_role": "前端", "default_level": "初级",
+            "default_level": "初级",
             "sections": [{"type": "trivia", "name": "八股文", "count": 2}],
             "max_questions": 5,
         }
@@ -76,8 +76,11 @@ class InterviewStateTest(unittest.TestCase):
         (tools_mod.build_section, tools_mod.score_answer,
          tools_mod.score_section, tools_mod.build_report) = self._orig
 
-    def _start(self):
-        return asyncio.run(tools_mod._start({}, self.cfg, ctx=_Ctx(self.sid)))
+    def _start(self, args=None):
+        # 显式带岗位，避免走「先问岗位」澄清；要测澄清时传 {} 再单独断言
+        if args is None:
+            args = {"role": "前端"}
+        return asyncio.run(tools_mod._start(args, self.cfg, ctx=_Ctx(self.sid)))
 
     def _answer(self, answer):
         return asyncio.run(tools_mod._answer({"answer": answer}, self.cfg, ctx=_Ctx(self.sid)))
@@ -169,6 +172,23 @@ class InterviewStateTest(unittest.TestCase):
     def test_answer_without_active_interview(self):
         out = self._answer("随便说说")
         self.assertIn("没有进行中", out)
+
+    # ── 未指明岗位先询问，而非静默用默认岗位 ─────────────────────────
+    def test_start_asks_role_when_not_given(self):
+        out = self._start({})                       # 不带岗位
+        self.assertIn("岗位", out)
+        self.assertEqual(self._state().status, "idle")   # 尚未开场
+        # 补上岗位 → 正常开场
+        out2 = self._start({"role": "后端"})
+        self.assertIn("模拟面试", out2)
+        self.assertEqual(self._state().status, "asking")
+
+    def test_start_repeated_no_role_falls_back(self):
+        # 第一次问；用户再次只说『开始』（仍无岗位）→ 通用兜底开场，不卡流程
+        self._start({})
+        out = self._start({})
+        self.assertIn("模拟面试", out)
+        self.assertEqual(self._state().status, "asking")
 
 
 if __name__ == "__main__":

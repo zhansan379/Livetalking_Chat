@@ -115,7 +115,7 @@ tools:
 capabilities:
   interview:
     enabled: true              # 模拟面试能力（模型驱动、state 制导、按态暴露工具）
-    default_role: "前端"        # 缺省岗位方向
+    # default_role 不再配置：开面试未指明岗位时先询问用户，而非静默用默认岗位
     default_level: "初级"       # 缺省难度
     max_questions: 5
     idle_timeout_s: 1800

@@ -143,8 +143,21 @@ async def _start(args, cfg, ctx=None):
             return ("模拟面试正在进行中（不要再开新场）。请继续当前环节"
                     f"『{sec.get('name')}』第{st.inline_idx() + 1}题：\n{q.get('text')}")
 
-    role = (args or {}).get("role") or getattr(cfg, "interview_default_role", None) or "通用"
+    role_arg = ((args or {}).get("role") or "").strip()
     level = (args or {}).get("level") or getattr(cfg, "interview_default_level", None) or "初级"
+
+    # 岗位未指明：不静默用默认岗位，先问用户。pending_role 与 resume 澄清同款——
+    # 问过仍没说才用兜底，避免无限互问。
+    if not role_arg:
+        if not st.get("pending_role"):
+            await st.save({"pending_role": True})
+            return ("开始之前先定个方向：你想模拟面试哪个岗位？"
+                    "（比如 前端/后端/算法/数据分析…；也可一并说难度，如『后端 中级』）")
+        await st.save({"pending_role": False})
+        role = (getattr(cfg, "interview_default_role", None) or "").strip() or "通用"
+    else:
+        await st.save({"pending_role": False})
+        role = role_arg
     resume_path, jd_path = _read_files(ctx, args)
     resume_text = (args or {}).get("resume_text") or await _grab_text(ctx, (resume_path,))
     jd_text = (args or {}).get("jd_text") or await _grab_text(ctx, ("", jd_path))
@@ -451,7 +464,8 @@ def _tools() -> list[dict]:
         {
             "name": "interview.start",
             "description": (
-                "开始一场模拟面试。参数 role/level 可选（缺省用配置默认）；"
+                "开始一场模拟面试。参数 role 要么传岗位方向（如 前端/后端），要么省略——"
+                "省略时先停留询问用户想面哪个岗位，待用户给出后再开；level 可选（缺省用配置默认）。"
                 "可将简历/岗位要求以 resume_text/jd_text 直接带入，或传 resume_path/jd_path "
                 "指向本会话已上传文件（需先用 read_file 确认存在）。开启后返回第1题。"
             ),
