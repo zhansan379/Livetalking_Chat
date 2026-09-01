@@ -61,3 +61,6 @@ mcp
 # Optional: remove these lines if you don't need local ASR
 funasr
 modelscope
+# 关键词唤醒（KWS）服务 — server/kws.py 使用 sherpa-onnx 开放词表 KWS
+sherpa-onnx
+pypinyin

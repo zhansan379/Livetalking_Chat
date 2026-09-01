@@ -422,6 +422,10 @@
         <svg class="ic mic-off" aria-hidden="true" viewBox="0 0 24 24"><line x1="2" y1="2" x2="22" y2="22"/><path d="M18.89 13.23A7.12 7.12 0 0 0 19 12v-2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M5 10v2a7 7 0 0 0 12 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M15 9.34V5a3 3 0 0 0-5.68-1.33" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="19" x2="12" y2="21"/></svg>
         <span id="call-label">开启通话</span>
     </button>
+    <button id="btn-wake" class="bar-btn" onclick="toggleWake()" aria-label="关键词唤醒" title="说唤醒词即自动开始语音对话">
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24"><path d="M2 14v-2a3 3 0 0 1 3-3h1"/><rect x="3" y="12" width="4" height="8" rx="2"/><rect x="17" y="12" width="4" height="8" rx="2"/><path d="M3 16v-1M21 5a6 6 0 0 0-3.1-2 6 6 0 0 0-6 2.4"/></svg>
+        <span id="wake-label">唤醒</span>
+    </button>
     <input id="msg" type="text" placeholder="语音识别结果 / 输入文字直接对话，回车发送" autocomplete="off"/>
     <button id="btn-upload" class="bar-btn" onclick="triggerUpload()" aria-label="上传文件" title="上传文件">
         <svg class="ic" aria-hidden="true" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -475,6 +479,12 @@
         <h3>热词识别（Hotwords）</h3>
         <textarea id="hotwords" rows="3" placeholder="每行一个热词，空格隔开权重&#10;例如：阿里巴巴 20&#10;　　　　hello world 40"></textarea>
         <div class="hint">一行一个关键字、空格隔开权重，识别时提高命中率。外部 FunASR 服务生效，本地 SenseVoice 端点暂不支持热词加权。</div>
+
+        <h3>关键词唤醒（KWS）</h3>
+        <input id="wakeword" type="text" value="小智同学" placeholder="开启词，如：小智同学"/>
+        <input id="sleepword" type="text" value="小智再见" placeholder="关闭词，如：小智再见"
+               style="margin-top:8px;"/>
+        <div class="hint">底栏点「唤醒」后待命，说「开启词」进入语音对话（带语音播报）；对话中说「关闭词」结束并回到待命（也带播报）。仅本机后端 KWS 可用时生效，模型未就绪会降级为普通通话。</div>
 
         <a id="wsslink" href="#" onclick="openAuth();return false;"><div id="info_wslink">点此处手工授权（IOS手机）</div></a>
 
@@ -667,6 +677,19 @@
     var pollTimer = null;            // /is_speaking 轮询
     var suppressUntil = 0;           // 回声抑制截止时间戳(ms)
     var suppressMs = 800;            // 数字人开口后抑制自回声时长
+    var wakeOn = false;              // 关键词唤醒开关（底栏「唤醒」按钮按下）
+    var wakeArmed = false;           // 是否正等待唤醒词（收到后端 wake 后置 false 进入正常通话）
+    var wakeKeyword = '';            // 开启词文本（来自设置 #wakeword）
+    var sleepKeyword = '';           // 关闭词文本（来自设置 #sleepword）
+    var wakeWS = null;               // /api/kws/ws WebSocket
+    var _kwsBatch = [];              // 待转给后端 KWS 的 16k 帧缓冲
+    var _kwsFlushTimer = null;       // 批量发送定时器
+    var _wokeAt = 0;                 // 命中开启词时间戳(ms)，用于丢弃开启词本句语音
+    var _sleptAt = 0;                // 命中关闭词时间戳(ms)，用于丢弃关闭词本句语音
+
+    // 开启/关闭两个关键词命中时的语音播报（走 type=echo 直连 TTS，不经 LLM）
+    var WAKE_ANNOUNCE = '好的，已开启语音识别，请说话';
+    var SLEEP_ANNOUNCE = '好的，已关闭语音识别，随时喊我';
 
     // 状态提示：kind 驱动左侧指示点颜色（idle/listening/speaking/collecting/
     // recognizing/thinking/busy/interrupt/warn/error/off）
@@ -813,47 +836,228 @@
         if (callOn) { stopCall(); } else { startCall(); }
     }
 
+    /* ==========================================================
+     * 关键词唤醒（KWS）：底栏「唤醒」按钮。
+     * 浏览器只做门控(用已加载的 Silero VAD 的 onFrameProcessed 沉默切帧)，
+     * 把 16k PCM 在「有声时」批量上送后端 /api/kws/ws（sherpa-onnx KWS）；
+     * 后端命中唤醒词回 {type:'wake'} → 自动进入正常通话（VAD→ASR→LLM）。
+     * 模型未就绪时后端回 {type:'error'} → 自动降级，提示用户直接开「开启通话」。
+     * ========================================================== */
+    function renderWakeBtn() {
+        var b = document.getElementById('btn-wake');
+        var l = document.getElementById('wake-label');
+        if (l) l.textContent = wakeOn ? '关闭唤醒' : '唤醒';
+        if (b) b.classList.toggle('active', wakeOn);
+    }
+
+    function toggleWake() {
+        if (wakeOn) { stopCall(); } else { startWake(); }
+    }
+
+    function _wakeKeyword() {
+        var el = document.getElementById('wakeword');
+        return (el && el.value || '').trim();
+    }
+    function _sleepKeyword() {
+        var el = document.getElementById('sleepword');
+        return (el && el.value || '').trim();
+    }
+
+    // 关键词本地记忆（localStorage，刷新/重开页面后仍保留）
+    var _KWS_SK_WAKE = 'kws.wakeword';
+    var _KWS_SK_SLEEP = 'kws.sleepword';
+    function _persistWakewords() {
+        try {
+            localStorage.setItem(_KWS_SK_WAKE, _wakeKeyword());
+            localStorage.setItem(_KWS_SK_SLEEP, _sleepKeyword());
+        } catch (e) {}
+    }
+    function _restoreWakewords() {
+        var elW = document.getElementById('wakeword');
+        var elS = document.getElementById('sleepword');
+        var v;
+        if (elW) {
+            try { v = localStorage.getItem(_KWS_SK_WAKE); } catch (e) {}
+            if (v && v.trim()) { elW.value = v.trim(); }
+            elW.addEventListener('change', _persistWakewords);  // 失焦/回车时保存
+        }
+        if (elS) {
+            try { v = localStorage.getItem(_KWS_SK_SLEEP); } catch (e) {}
+            if (v && v.trim()) { elS.value = v.trim(); }
+            elS.addEventListener('change', _persistWakewords);
+        }
+    }
+
+    // 唤醒开关状态本地记忆：每次 wakeOn 变化后调用，刷新后自动恢复到上次开/闭
+    var _KWS_SK_ON = 'kws.wakeon';
+    function _persistWakeOn() {
+        try { localStorage.setItem(_KWS_SK_ON, wakeOn ? '1' : '0'); } catch (e) {}
+    }
+    function _wakeOnSaved() {
+        try { return localStorage.getItem(_KWS_SK_ON) === '1'; } catch (e) { return false; }
+    }
+
+    // 把 16k 帧转成 Int16(PCM16) 后追加进批量缓冲；每 ~50ms 合并发一次，降低 WS 消息数
+    function _kwsPush(frame) {
+        // frame 可能是 Float32Array（[-1,1]）或 Int16Array，统一归一到 Int16
+        var i16;
+        if (frame instanceof Int16Array) {
+            i16 = frame;
+        } else {
+            i16 = new Int16Array(frame.length);
+            for (var i = 0; i < frame.length; i++) {
+                var v = Math.max(-1, Math.min(1, frame[i]));
+                i16[i] = (v < 0) ? (v * 0x8000) : (v * 0x7FFF);
+            }
+        }
+        _kwsBatch.push(i16);
+        if (!_kwsFlushTimer) _kwsFlushTimer = setTimeout(_kwsFlush, 50);
+    }
+
+    function _kwsFlush() {
+        _kwsFlushTimer = null;
+        if (!_kwsBatch.length) return;
+        var frames = _kwsBatch;
+        _kwsBatch = [];
+        var total = 0, i;
+        for (i = 0; i < frames.length; i++) total += frames[i].length;
+        var buf = new Int16Array(total), off = 0;
+        for (i = 0; i < frames.length; i++) { buf.set(frames[i], off); off += frames[i].length; }
+        if (wakeWS && wakeWS.readyState === 1) { try { wakeWS.send(buf.buffer); } catch (e) { } }
+    }
+
+    function closeKwsWS() {
+        if (_kwsFlushTimer) { clearTimeout(_kwsFlushTimer); _kwsFlushTimer = null; }
+        _kwsBatch = [];
+        if (wakeWS) { try { wakeWS.close(); } catch (e) { } wakeWS = null; }
+    }
+
+    function openKwsWS() {
+        closeKwsWS();
+        var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+        var ws = new WebSocket(proto + location.host + '/api/kws/ws?session=' + encodeURIComponent(getSessionId()));
+        wakeWS = ws;
+        var kw = wakeKeyword;
+        ws.onopen = function () {
+            var kws = [kw].concat(sleepKeyword ? [sleepKeyword] : []);
+            try { ws.send(JSON.stringify({ keywords: kws })); } catch (e) { }
+        };
+        ws.onmessage = function (ev) {
+            var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+            if (!m) return;
+            if (m.type === 'wake') onKwsWake(m.keyword);
+            else if (m.type === 'error') onKwsError(m.reason);
+            else if (m.type === 'ready' && wakeArmed) setCallStatus('待唤醒：请说「' + kw + '」...', 'listening');
+        };
+        ws.onclose = function () { if (wakeWS === ws) wakeWS = null; };
+        ws.onerror = function () { try { ws.close(); } catch (e) { } };
+    }
+
+    // 后端命中关键词 → 按是「开启词」还是「关闭词」走不同状态（KWS 流保持常开）
+    function onKwsWake(kw) {
+        if (!wakeOn) return;
+        if (kw && kw === sleepKeyword) {
+            onKwsSleep();   // 关闭词
+            return;
+        }
+        // 开启词：进入正常通话
+        if (callOn) return;  // 已在通话，忽略重复唤醒
+        wakeArmed = false;
+        callOn = true;
+        _wokeAt = Date.now();
+        renderCallBtn();       // 变红「关闭通话」
+        renderWakeBtn();
+        startPolling();        // 插话/回声抑制状态轮询
+        setCallStatus('已唤醒，请说话...', 'collecting');
+        if (WAKE_ANNOUNCE) sendText(WAKE_ANNOUNCE);   // 语音播报「已开启」
+    }
+
+    // 关闭词：结束本次对话，回到待命（继续听开启词，可无手再次唤醒）
+    function onKwsSleep() {
+        if (!callOn) return;   // 本就没在对话，忽略
+        callOn = false;
+        wakeArmed = true;      // 回到「待唤醒」态
+        _sleptAt = Date.now(); // 丢弃关闭词本句语音，避免发给 LLM
+        stopPolling();
+        avatarSpeaking = false;
+        utteranceQueue = [];
+        draining = false;
+        renderCallBtn();
+        renderWakeBtn();
+        setCallStatus('已关闭语音识别，请说「' + wakeKeyword + '」唤醒', 'idle');
+        if (SLEEP_ANNOUNCE) sendText(SLEEP_ANNOUNCE);   // 语音播报「已关闭」
+    }
+
+    // 后端 KWS 不可用（模型缺失等）→ 优雅降级为普通通话
+    function onKwsError(reason) {
+        if (!wakeOn) return;
+        wakeOn = false; wakeArmed = false;
+        _persistWakeOn();          // KWS 不可用则清除恢复标记
+        closeKwsWS();
+        _destroyVAD();
+        renderWakeBtn();
+        setCallStatus('唤醒暂不可用（' + (reason || '') + '），请直接用「开启通话」', 'warn');
+    }
+
+    function _destroyVAD() {
+        if (myvad) { try { myvad.destroy(); } catch (e) { } myvad = null; }
+    }
+
+    // 单实例共享 VAD：普通通话与唤醒监听共用，避免麦克风双占
+    function _ensureVAD() {
+        if (myvad) return Promise.resolve();
+        if (!window.vad || !window.vad.MicVAD) {
+            return Promise.reject(new Error('语音检测库未加载'));
+        }
+        return window.vad.MicVAD.new({
+            onnxWASMBasePath: "lib/",
+            baseAssetPath: "lib/",
+            // 唤醒监听门控：把 16k 帧批量上送后端 KWS（仅唤醒待命时）
+            onFrameProcessed: function (probs, frame) {
+                // 唤醒功能开启期间，待命与对话中都把帧喂给后端 KWS（对话中靠它听关闭词）
+                if (wakeOn && wakeWS && wakeWS.readyState === 1) _kwsPush(frame);
+            },
+            onSpeechStart: function () {
+                if (!callOn) return;
+                if (bargeInEnabled() && avatarSpeaking && Date.now() > suppressUntil) {
+                    interruptAvatar();
+                    suppressUntil = Date.now() + suppressMs;
+                    setCallStatus('已打断数字人...', 'interrupt');
+                }
+                if (!draining) setCallStatus('说话中...', 'speaking');
+            },
+            onSpeechRealStart: function () {
+                if (wakeArmed || !draining) setCallStatus(wakeArmed ? '待唤醒...' : '收集中...', wakeArmed ? 'listening' : 'collecting');
+            },
+            onVADMisfire: function () {
+                if (wakeArmed) { if (wakeOn) setCallStatus('待唤醒：请说「' + wakeKeyword + '」...', 'listening'); return; }
+                if (!draining) setCallStatus('正在倾听...', 'listening');
+            },
+            onSpeechEnd: function (audio) {
+                if (!callOn) return;
+                // 刚被唤醒/被关闭瞬间丢弃该词本句，避免把「开启词/关闭词」本身发给 LLM
+                if (Date.now() - _wokeAt < 1500) return;
+                if (Date.now() - _sleptAt < 1500) return;
+                startResponseMeasure();
+                utteranceQueue.push(audio);
+                drainQueue();
+            },
+        }).then(function (v) { myvad = v; myvad.start(); });
+    }
+
     async function startCall() {
         var Uri = document.getElementById('wssip').value;
         if (!Uri.match(/^wss?:\/\//)) {
             setCallStatus('请先在设置中填写正确的 asr 服务器地址', 'error');
             return;
         }
-        if (!window.vad || !window.vad.MicVAD) {
-            setCallStatus('语音检测库未加载', 'error');
-            return;
-        }
+        // 从唤醒模式切到普通通话：关闭唤醒监听
+        if (wakeOn) { wakeOn = false; wakeArmed = false; _persistWakeOn(); closeKwsWS(); renderWakeBtn(); }
         callOn = true;
         renderCallBtn();
         setCallStatus('初始化语音检测...', 'busy');
         try {
-            myvad = await window.vad.MicVAD.new({
-                onnxWASMBasePath: "lib/",   // 本地 onnxruntime wasm
-                baseAssetPath: "lib/",      // 本地 silero 模型 + worklet
-                onSpeechStart: function () {
-                    if (!callOn) return;
-                    // 插话：数字人正在说话时用户开口 → 立即打断
-                    if (bargeInEnabled() && avatarSpeaking && Date.now() > suppressUntil) {
-                        interruptAvatar();
-                        suppressUntil = Date.now() + suppressMs;
-                        setCallStatus('已打断数字人...', 'interrupt');
-                    }
-                    if (!draining) setCallStatus('说话中...', 'speaking');
-                },
-                onSpeechRealStart: function () {
-                    if (!draining) setCallStatus('收集中...', 'collecting');
-                },
-                onVADMisfire: function () {
-                    if (!draining) setCallStatus('正在倾听...', 'listening');
-                },
-                onSpeechEnd: function (audio) {
-                    if (!callOn) return;
-                    startResponseMeasure();       // 检测到语音(结束) → 开始计时
-                    utteranceQueue.push(audio);   // 入队，绝不丢弃
-                    drainQueue();
-                },
-            });
-            myvad.start();
+            await _ensureVAD();
             startPolling();
             setCallStatus('正在倾听，请说话...', 'listening');
         } catch (e) {
@@ -861,6 +1065,39 @@
             setCallStatus('语音检测初始化失败（需 localhost/https + 麦克风）', 'error');
             callOn = false;
             renderCallBtn();
+        }
+    }
+
+    async function startWake() {
+        wakeKeyword = _wakeKeyword();
+        sleepKeyword = _sleepKeyword();
+        if (!wakeKeyword) {
+            setCallStatus('请先在设置中填写开启词', 'error');
+            return;
+        }
+        var Uri = document.getElementById('wssip').value;
+        if (!Uri.match(/^wss?:\/\//)) {
+            setCallStatus('请先在设置中填写正确的 asr 服务器地址', 'error');
+            return;
+        }
+        if (window.vad && window.vad.MicVAD) { /* ok */ } else {
+            setCallStatus('语音检测库未加载', 'error');
+            return;
+        }
+        if (callOn) { stopCall(); }
+        wakeOn = true; wakeArmed = true; callOn = false;
+        _persistWakeOn();          // 记住「唤醒已开启」，刷新后自动恢复
+        renderWakeBtn(); renderCallBtn();
+        setCallStatus('初始化唤醒监听...', 'busy');
+        try {
+            await _ensureVAD();
+            openKwsWS();
+        } catch (e) {
+            console.error('Wake VAD init failed:', e);
+            wakeOn = false; wakeArmed = false;
+            _persistWakeOn();      // 失败则清除标记，避免每次加载都重试
+            renderWakeBtn();
+            setCallStatus('唤醒监听初始化失败（需麦克风/本机后端 KWS）', 'error');
         }
     }
 
@@ -1073,7 +1310,11 @@
         avatarSpeaking = false;
         utteranceQueue = [];
         draining = false;
-        if (myvad) { try { myvad.destroy(); } catch (e) {} myvad = null; }
+        wakeOn = false; wakeArmed = false;
+        _persistWakeOn();          // 记住「唤醒已关闭」
+        closeKwsWS();
+        _destroyVAD();
+        renderWakeBtn();
         renderCallBtn();
         setCallStatus('已关闭通话', 'off');
     }
@@ -1098,6 +1339,7 @@
         document.getElementById('modal-mask').classList.add('open');
     }
     function closeSettings() {
+        _persistWakewords();  // 关设置时兜底保存一次开启/关闭词
         document.getElementById('modal-mask').classList.remove('open');
     }
     function sendEcho() {
@@ -1128,6 +1370,12 @@
         document.getElementById('wssip').value = protocol + host + "/api/asr";
         document.getElementById('asr-hint').textContent = "已自动检测为本地端点: " + protocol + host + "/api/asr";
         addresschange();
+
+        // 还原上次保存的开启/关闭词（localStorage）
+        _restoreWakewords();
+
+        // 还原上次唤醒开关：若上次开着，自动恢复待命监听（获取麦克风失败会自动清除标记）
+        if (_wakeOnSaved()) startWake();
 
         // 底栏输入框：回车发送文字，交给 LLM 对话回答（type: chat）
         $('#msg').on('keydown', function (e) {

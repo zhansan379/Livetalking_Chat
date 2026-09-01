@@ -398,6 +398,13 @@ def setup_routes(app):
     except Exception as e:
         logger.warning(f"[ASR] Failed to register ASR endpoint: {e}")
 
+    # ── 关键词唤醒（KWS）WebSocket — 模型就绪才可用，否则前端降级普通通话 ──
+    try:
+        from server.kws import kws_websocket_handler
+        app.router.add_get('/api/kws/ws', kws_websocket_handler)
+    except Exception as e:
+        logger.warning(f"[KWS] Failed to register KWS endpoint: {e}")
+
     # ── 观测平台 /api/obs/* ──
     try:
         from obs import setup_routes as _setup_obs
