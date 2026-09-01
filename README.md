@@ -63,6 +63,18 @@ pip install -r requirements.txt
 | `wav2lip256_avatar1.tar.gz` | `data/avatars/` | 数字人形象，解压到 `data/avatars/`（CLI 默认 `avatar_id`） |
 | `rem.tar.gz` | `data/avatars/rem/` | 中文音色形象，`run.bat` 默认使用（需 `rem/full_imgs`） |
 
+#### 3a. 或：从 Release 一键拉取全部模型/形象/动作 🚀
+
+`models/` 与 `data/`（含数字人形象、动作表情、面试库、音乐）体积约 1GB，
+不走 git（避免撑爆仓库与 git 100MB 单文件限制），而是随 **GitHub Releases 附件** 分发：
+
+```bat
+python scripts/download_models.py        :: 拉取最新 Release 并自动解压到 models/ 与 data/
+python scripts/package_release.py        :: （维护者用）把本地 models/ data/ 打成 release zip
+```
+
+下载脚本纯标准库、无需密钥；拉完即可 `run.bat` 启动，免去手动逐项下载。
+
 ### 4. 配置
 
 - 编辑 `config.yaml`（默认值，CLI 参数可覆盖）或改 `.env`（TTS/LLM 密钥）

@@ -27,5 +27,7 @@ dist
 logs/
 
 scripts/
+# download_models.py 下载的 release 附件解压临时包（不进版本库）
+livetalking-assets-*.zip
 *.wav
 *.pcm
