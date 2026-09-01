@@ -1,84 +1,129 @@
 # Livetalking_Chat
 
-基于 [lipku/LiveTalking](https://github.com/lipku/LiveTalking) 的实时数字人语音对话系统。浏览器端通过 WebRTC 接入，支持语音识别（ASR）、大模型对话（LLM）、语音合成（TTS）与数字人口型生成，实现与数字人的自然语音交互。
+一个**会和你说活的数字人**：电脑屏幕上有一个虚拟形象，你开口对它说话，它就能听懂、想好该说啥、再用嘴巴一张一合地对你说回来。
 
-- 前端：`web/avatar-chat.html`（全屏语音对话，内置浏览器端 VAD / ASR / WebRTC）
-- 后端：基于 `aiohttp` + `aiortc`，Python 3.12
-- 授权：Apache-2.0（继承上游 LiveTalking）
+这套系统来自开源的 [lipku/LiveTalking](https://github.com/lipku/LiveTalking)，我们在它的基础上加了很多实用功能（说话能随时被打断、看得见你在干嘛、能连各种 AI 对话和工具箱等，见下方「它能做什么」）。
 
----
-
-<img width="2549" height="1191" alt="image" src="https://github.com/user-attachments/assets/0d07cea1-8769-4bed-a92a-a65255e89260" />
-
-
-## ✨ 功能特性
-
-- **实时数字人对话**：浏览器 WebRTC 推拉流，数字人口型/动作实时合成
-- **多模态输入**：语音（浏览器端 VAD + ASR）/ 文本（底栏输入框回车走 LLM 对话）
-- **语音打断（插话）**：数字人说话时可开口打断（barge-in）
-- **静默解锁 + 首次点击遮罩**：加载即静音渲染画面，点击遮罩后开声（规避浏览器自动播放策略）
-- **逐句字幕**：订阅 `/sse` 流，随数字人朗读逐句显示，底部可「字幕 开/关」
-- **多轮对话记忆**：`agent/` 包持久化完整转录，超阈值后后台压缩为有界摘要，回复不阻塞
-- **可插拔模型**：支持 `wav2lip` / `musetalk` / `ultralight` 数字人模型
-- **多 TTS 引擎**：edge-tts / gpt-sovits / cosyvoice / fishtts / tencent / doubao / indextts2 / azuretts / qwentts
-- **本地 ASR 端点**：可选集成 FunASR/SenseVoice（`/api/asr`），亦支持外部 FunASR 服务并带热词
-- **摄像头「看用户」**：数字人可经 agent 工具按需抓一帧摄像头画面交给视觉模型，描述用户当下状态（见 [`docs/摄像头看用户工具.md`](docs/摄像头看用户工具.md)）
-- **MCP 外部工具接入**：通过 `agent/mcp.py` 连接多台 MCP 服务器（stdio / sse / http），把其工具以 `mcp_<server>_<tool>` 注入对话工具表，复用生态工具（filesystem / sqlite / git 等）（见 [`docs/how-to-mcp.md`](docs/how-to-mcp.md)）
-- **管理后台**：`web/admin.html` 查看全局配置与活跃会话
-- **多种推流方式**：WebRTC / RTMP / RTCPush / 虚拟摄像头（virtualcam）
+- 浏览器打开就能用，靠网页标准通话技术（WebRTC）推流，配有全屏对话页面
+- 后端起作用的是 Python 3.12
+- 授权：Apache-2.0（沿袭上游 LiveTalking，同款开源协议）
 
 ---
 
-## 🚀 快速开始（Windows）
+## 🖼️ 界面长这样
 
-### 1. 创建虚拟环境
+<!-- 图片位 1：在这里插入「主对话界面」整屏截图，展示数字人形象 + 底部输入框 + 字幕。建议宽 2549 高 1191。 -->
+> 🖼️ **【图片：主对话界面截图】** 有一张可先放这儿，没有就先空着。
+
+---
+
+## 它能做什么（大白话版）
+
+- **会听会答**：你按着说话，它认出你在讲什么（语音识别），交给大模型想好怎么回（对话），再用能发出声音的引擎说出来（语音合成），同时嘴巴跟着动。
+  > ① 识别  ② 想怎么答  ③ 发出声音  ④ 动嘴 —— 四步连接成一次对话。
+- **说一半能打岔**：它正说着话，你直接开口就能打断它，它停下来听你说。
+- **想打文字也行**：不想开口时，页面底部有输入框，敲回车就走的是一样的对话。
+- **一句话一个字地显示字幕**：它说到哪句，字幕跟到哪句，可随时开关。
+- **记得住聊过啥**：它不会"失忆"，历史对话会存下来，太长时会悄悄压缩成摘要，聊很久也能接上话。
+- **能看到你在干嘛**（可选）：它需要时可以抓一帧你摄像头画面，交给看得懂图的大模型，描述你当下的状态（比如"你在笑"）。
+- **能接外面的工具箱**（可选）：通过 MCP 机制，可以把文件、数据库、git 等外部能力接进来，让数字人能实际调用它们。
+- **换形象、换音色都随你**：同一套系统可换好几款数字人（wav2lip / musetalk / ultralight），语音也有多种引擎可选（见下方「更多设置」）。
+- **管理台**：`web/admin.html` 一个页面能看全局配置和在线会话。
+
+---
+
+## 🧰 现在有哪些工具 / 能力（tool 一览）
+
+下面这张表是把当前系统里真真切切挂载着的能力都列了一遍。分三类：**随时能用的通用工具**、**只在面试场景出现的面试能力**、**后台自动跑的**（不用你管）。
+
+### 一、通用工具（说得着就用）
+
+| 代码里叫这个名字 | 大白话：能干嘛 | 谁在用 / 开关 |
+| ---- | ---- | ---- |
+| `web_search` | 上网帮你查资料、找答案 | 全局，`tool_web_search_enabled` |
+| `weather` | 查某个城市的实时天气（热不热、下不下雨） | 全局，`tool_weather_enabled` |
+| `schedule_reminder` | 定个闹钟提醒你：几秒后／今天几点／每天固定点（喝水、播天气…）都行 | 全局，`tool_reminder_enabled` |
+| `cancel_reminder` | 把之前设的提醒取消掉 | 同上 |
+| `list_reminders` | 看看现在设了哪些提醒 | 同上 |
+| `question_search` | 从本地面试题库里"按意思"搜相近的题，用来复习 / 找考点 | 全局，`tool_question_search_enabled` |
+| `look_at_user` | 「看你一眼」：抓一帧你摄像头画面，让看得懂图的说你现在长啥样／啥表情 | 全局，`tool_look_at_user_enabled` |
+| `list_files` / `read_file` | 浏览、打开会话里传的文件 | 全局，`tool_files_enabled` |
+| `shutdown_pc` | 你明确说关机时，它帮你关这台电脑 | 全局，`tool_shutdown_pc_enabled` |
+| `play_music` | 放歌、放背景音乐 | 全局，`tool_play_music_enabled` |
+| `mcp_*` | 再接进来的"外部工具箱"，比如文件、数据库、git，能真正被它调用 | 见 `docs/how-to-mcp.md` |
+
+### 二、面试能力（你一说要面试才上场）
+
+| 代码里叫这个名字 | 大白话：能干嘛 |
+| ---- | ---- |
+| `interview.start` / `.answer` / `.next_section` / `.skip` / `.hint` / `.end` / `.status` | 当你说"我想面试"，它就当**面试官**带你走完整套流程：出题、听你答、判分、给提示、跳题、换环节、结束总结 |
+
+### 三、后台自动跑的
+
+| 名字 | 大白话：能干嘛 |
+| ---- | ---- |
+| 长期记忆（`longterm`） | 你说完话，它闲下来时偷偷把重点存下来，下次聊还能想起来（不用你管，自己生效） |
+
+> 想要哪个工具，去 `agent/agent_config.yaml` 里看对应开关；想自己加新工具，打开说明见 `capabilities/how-to-add-capability.md`（其中「工具」和「能力」的区别也写在里面）。
+
+---
+
+## 🚀 快速跑起来（Windows）
+
+下面几步，照着抄就行。
+
+### 1. 先准备个干净的运行环境
+
+用 `uv`（推荐）：
 
 ```bat
 uv venv --python 3.12 .venv
 .venv\Scripts\activate.bat
 ```
 
-或使用 `conda`：
+或者用 `conda`：
 
 ```bat
 conda create -n livetalking python=3.12
 conda activate livetalking
 ```
 
-### 2. 安装依赖
+### 2. 安装要用到的软件包
 
 ```bat
 pip install -r requirements.txt
 ```
 
-> 可选本地 ASR：`requirements.txt` 已含 `funasr`、`modelscope`，若不需要可自行删除该行。
+> 可选项：如果不需要本地"听写"（语音识别）功能，`requirements.txt` 里那行 `funasr`、`modelscope` 可以自己删掉。
+> —— 要不要本地听写，看你想不想一开机就能离线听懂英文；不装也能跑。
 
-### 3. 准备模型文件
+### 3. 准备数字人需要的「模型」和「形象」
 
-默认使用 `wav2lip` + 中文音色：
+第一次跑要准备两样东西：**会动嘴的模型**（`models/`）和**形象素材**（`data/`）。两套办法：
 
-| 文件 | 位置 | 说明 |
-| ---- | ---- | ---- |
-| `wav2lip256.pth` | `models/wav2lip.pth` | 嘴型同步模型，下载后重命名 |
-| `wav2lip256_avatar1.tar.gz` | `data/avatars/` | 数字人形象，解压到 `data/avatars/`（CLI 默认 `avatar_id`） |
-| `rem.tar.gz` | `data/avatars/rem/` | 中文音色形象，`run.bat` 默认使用（需 `rem/full_imgs`） |
-
-#### 3a. 或：从 Release 一键拉取全部模型/形象/动作 🚀
-
-`models/` 与 `data/`（含数字人形象、动作表情、面试库、音乐）体积约 1GB，
-不走 git（避免撑爆仓库与 git 100MB 单文件限制），而是随 **GitHub Releases 附件** 分发：
+**办法 A（省事，推荐）：从 Release 一键拉全**
+`models/` 和 `data/` 加起来约 1GB，太大，不适合塞进 GitHub 仓库里，所以打包成一个大压缩包放在 GitHub Releases 上。运行：
 
 ```bat
-python scripts/download_models.py        :: 拉取最新 Release 并自动解压到 models/ 与 data/
-python scripts/package_release.py        :: （维护者用）把本地 models/ data/ 打成 release zip
+python scripts/download_models.py
 ```
 
-下载脚本纯标准库、无需密钥；拉完即可 `run.bat` 启动，免去手动逐项下载。
+它会自动把最新的数据包下载下来，并解压到 `models/` 和 `data/` 该有的位置，全程不用你手动挑文件。（`scripts/package_release.py` 是给维护者打包用的，一般用不到。）
 
-### 4. 配置
+**办法 B（自己手动逐项下载）：**
+默认是 `wav2lip` 模型 + 中文音色形象：
 
-- 编辑 `config.yaml`（默认值，CLI 参数可覆盖）或改 `.env`（TTS/LLM 密钥）
-- `.env.example` 提供了所需的密钥占位：`TENCENT_*`、`DASHSCOPE_API_KEY`、`DOUBAO_API_KEY`
+| 文件 | 放到哪里 | 是干嘛的 |
+| ---- | ---- | ---- |
+| `wav2lip256.pth` | `models/wav2lip.pth` | 让嘴巴跟着声音动的模型，下好后重命名成这个名 |
+| `wav2lip256_avatar1.tar.gz` | 解压到 `data/avatars/` | 数字人的长相 |
+| `rem.tar.gz` | 解压到 `data/avatars/rem/` | 一套中文音色的形象，`run.bat` 默认用这套 |
+
+### 4. 填两处配置
+
+- **配置多少、用啥默认**：改 `config.yaml`
+- **语音和 AI 对话的密钥**：改 `.env`（`.env.example` 里有每种密钥该填在哪的占位，照着填就行）
+- 要点填的：`TENCENT_*`、`DASHSCOPE_API_KEY`、`DOUBAO_API_KEY`（分别对应腾讯语音、百炼对话、豆包语音的账号钥匙）
 
 ### 5. 启动
 
@@ -86,117 +131,115 @@ python scripts/package_release.py        :: （维护者用）把本地 models/ 
 run.bat
 ```
 
-`run.bat` 等价于（默认模型 `wav2lip`、形象 `rem`，端口 8010）：
+它等价于下面这条命令（默认 `wav2lip`、形象 `rem`、端口 8010）：
 
 ```bat
 python app.py --transport webrtc --model wav2lip --avatar_id rem
 ```
 
-浏览器打开：
+### 6. 浏览器打开
 
 ```
-http://<serverip>:8010/
+http://<你的服务器IP>:8010/
 ```
 
-> 使用 WebRTC 时，浏览器需能访问 STUN 服务器（默认 `stun:stun.freeswitch.org:3478`，可在 `config.yaml` 修改或页面内勾选 Use STUN server）。
+> 用的是网页实时通话（WebRTC）时，浏览器要能连得上中转服务器（默认 `stun:stun.freeswitch.org:3478`）。网络受限环境可在 `config.yaml` 改，或页面上勾上「Use STUN server」。
 
 ---
 
-## 🎭 支持的 avatar 模型
+## 🖼️ 更多功能截图
 
-| 模型 | `--model` | 说明 |
+<!-- 图片位 2：在这里插入「管理后台 admin.html」截图。 -->
+> 🖼️ **【图片：管理后台截图】** 可放这儿，没有就先空着。
+
+<!-- 图片位 3：在这里插入「摄像头看用户 / 打断说话」等功能的演示截图。 -->
+> 🖼️ **【图片：能力演示截图】** 可放这儿，没有就先空着。
+
+---
+
+## 🎭 我能用几种形象 / 音色
+
+### 数字人类别（决定"像不像真人"）
+
+| 类别 | 命令行里叫 | 大白话 |
 | ---- | --- | ---- |
-| wav2lip | `wav2lip` | 嘴型同步，通用性强（默认） |
-| musetalk | `musetalk` | 更真实，依赖官方模型 |
-| ultralight | `ultralight` | 轻量化模型 |
+| wav2lip | `wav2lip` | 最常用、最稳，给声音配上嘴形（默认） |
+| musetalk | `musetalk` | 画面更接近真人，但要额外下官方模型 |
+| ultralight | `ultralight` | 更轻量，老一点/配置差一点的机器也能跑 |
 
-对应的数字人插件位于 `avatars/`，通过 `@register` 机制加载。
+### 语音（声音）引擎
+
+edge-tts(免费用) / gpt-sovits / cosyvoice / fishtts / tencent 腾讯 / doubao 豆包 / indextts2 / azuretts 微软 / qwentts 通义 —— 想要哪种声音，在 `config.yaml` 或启动参数 `--tts` 里指定。
 
 ---
 
-## 🌊 推流 / 传输方式
+## 🌊 想让画面去哪个"屏幕"（推流方式）
 
-`config.yaml` → `transport` 字段，或 CLI `--transport`：
-
-| 值 | 说明 |
+| 值 | 大白话 |
 | --- | --- |
-| `webrtc` | 浏览器实时对话（默认，推荐） |
-| `rtmp` | 推流到 RTMP 服务器，需 `push_url` |
-| `rtcpush` | RTCPush 推流，需 `push_url` |
-| `virtualcam` | 渲染到虚拟摄像头，会话 0 |
+| `webrtc` | 直接在浏览器页面上看（默认，最省事） |
+| `rtmp` | 推到直播服务器，别人可看 |
+| `rtcpush` | 推到指定地址直播，需要 `push_url` |
+| `virtualcam` | 把数字人当成一个"虚拟摄像头"，让别的软件（如钉钉/腾讯会议）从它这儿取画面 |
 
 ---
 
-## 🔌 HTTP API
+## 💬 想接自己的 AI 对话？在这里改
 
-| 方法与路径 | 说明 |
+承接"听懂→想话→说话"这一环的 AI 对话，走 `infra_ai` 这套：
+
+- **默认对话模型**：`infra_ai/config.yaml` 里的 `routing.chat` 默认用百炼（`qwen-plus`，靠 `DASHSCOPE_API_KEY`）；想换通道，改 `SF_CHAT_MODEL` / `SF_API_KEY`
+- **聊过啥记多久**：`agent/agent_config.yaml` 里有 `compress_threshold`、`keep_recent`、`target_summary_chars` 这些阈值，管多少条历史触发压缩、留最近几条；回复期间后台悄悄压缩，不卡你
+- **key 速查**（`.env`）：
+
+| 变量 | 干啥用 |
 | ---- | ---- |
-| `POST /offer` | WebRTC SDP Offer / Answer |
-| `POST /human` | 文本输入（`type: echo`/`chat`），支持 `voice`/`emotion` |
-| `POST /humanaudio` | 上传音频驱动数字人 |
-| `POST /interrupt_talk` | 打断当前说话 |
-| `POST /set_audiotype` | 设置自定义动作编排 |
-| `POST /is_speaking` | 查询是否正在说话 |
-| `POST /record` | 开始/停止录制 |
-| `GET /sse` | SSE 事件流（服务器状态推送） |
-| `GET /record/{sessionid}` | 下载录制 MP4 |
-| `GET /api/asr` | 本地 ASR WebSocket 端点（需安装 funasr） |
-| `GET /api/admin/config` | 管理后台：全局配置 |
-| `GET /api/admin/sessions` | 管理后台：活跃会话 |
+| `DASHSCOPE_API_KEY` | 百炼对话（默认对话模型）+ 通义声音等 |
+| `SF_API_KEY` | 硅基流动：文字 / 看图 / 向量这几类通道 |
+| `DOUBAO_API_KEY` / `TENCENT_*` | 豆包 / 腾讯语音 |
+| 没填对应密钥 | 声音退回到免费的 edge-tts；对话通道至少要有一个才说得起来 |
 
 ---
 
-## 🗂️ 目录结构
+## 🛠️ 给开发者看的技术速查（看不懂可跳过）
+
+### HTTP 接口一览
+
+| 方法与路径 | 干嘛的 |
+| ---- | ---- |
+| `POST /offer` | 建立网页实时通话的手续 |
+| `POST /human` | 让数字人应答一句话（`type: echo`/`chat`） |
+| `POST /humanaudio` | 上传一段音频驱动数字人 |
+| `POST /interrupt_talk` | 打断它当前说的话 |
+| `POST /set_audiotype` | 配自定义动作编排 |
+| `POST /is_speaking` | 问它"你现在在路上话吗" |
+| `POST /record` | 开始 / 停止录像 |
+| `GET /sse` | 服务端实时状态推送（字幕用它） |
+| `GET /record/{sessionid}` | 下载录好的视频 |
+| `GET /api/asr` | 本地听写端点（需装 funasr） |
+| `GET /api/admin/config` | 管理台：全局配置 |
+| `GET /api/admin/sessions` | 管理台：在线会话 |
+
+### 目录速览
 
 ```
-app.py                       # 服务入口，路由注册、CORS、会话管理
-config.py                    # CLI 参数解析
-config.yaml                  # 配置文件（默认值）
-agent/                       # 多轮对话记忆（历史 JSON 持久化 + 有界摘要压缩）
-  ├─ agent.py                # ChatAgent：组装上下文、后台异步压缩
-  ├─ history.py              # 会话历史持久化
-  └─ agent_config.yaml       # 记忆/压缩阈值配置（system_prompt 等）
-infra_ai/                    # LLM 基础设施（熔断/路由/限流/流式/嵌入/重排），取代原 llm.py
-  ├─ config.yaml             # LLM 路由与模型配置（支持 ${ENV} 占位符）
-  └─ inference.py            # 推理核心 + 工具调用
-registry.py                  # avatar 插件注册
-avatars/                     # 数字人模型插件（musetalk/wav2lip/ultralight）
-server/                      # 后端核心
-  ├─ routes.py               # HTTP/SSE 通用 API + chat 流式问答（接线 agent + infra_ai）
-  ├─ webrtc.py               # WebRTC HumanPlayer
-  ├─ rtc_manager.py          # RTC 连接管理
-  ├─ session_manager.py      # 会话管理
-  ├─ avatar_routes.py        # avatar 生成路由
-  ├─ task_manager.py         # 后台任务管理
-web/                         # 前端
-  ├─ avatar-chat.html        # 全屏语音对话页（默认首页）
-  ├─ admin.html              # 管理后台
-  └─ lib/                    # 本地化依赖（jquery/onnxruntime/vad/bootstrap）
-data/                        # 数字人形象、录制、自定义动作
-models/                      # 模型权重
-asr/                         # 本地 ASR（可扩展多引擎 + 候选池熔断回退）
-tts/ streamout/ utils/       # TTS、输出、工具模块
+app.py                 # 入口：注册路由、登录跨域、管会话
+config.py              # 读命令行参数的解析器
+config.yaml            # 配置文件（默认值）
+agent/                 # 多轮对话记忆：历史存 JSON + 太长时压缩成摘要
+infra_ai/              # AI 对话的"基础设施"：切换/限流/流式/看图/向量等
+registry.py            # 数字人插件的登记表
+avatars/               # 数字人类别插件（musetalk / wav2lip / ultralight）
+server/                # 后端核心
+web/                   # 前端：对话页(avatar-chat.html)、管理台(admin.html)、本地依赖
+data/                  # 形象素材、录制、自定义动作
+models/                # 模型权重
+asr/                   # 本地听写
+tts/ streamout/ utils/ # 语音、输出、工具
 ```
 
 ---
 
-## 💬 LLM 对话与多轮记忆
-
-文本/语音对话统一经 `infra_ai` 调用大模型：
-
-- **默认对话模型**：`infra_ai/config.yaml` 中 `routing.chat` 默认启用 bailian（`qwen-plus`，走 `DASHSCOPE_API_KEY`）；可改 `SF_CHAT_MODEL` / `SF_API_KEY` 切换 SiliconFlow 通道
-- **多轮记忆**：`agent/agent_config.yaml` 控制 `system_prompt` 与压缩阈值（`compress_threshold` / `keep_recent` / `target_summary_chars`），历史持久化到 JSON，回复期间后台异步压缩不阻塞
-- 键位占位（`.env`）：
-
-| 变量 | 用途 |
-| ---- | ---- |
-| `DASHSCOPE_API_KEY` | 百炼通话（默认对话模型）+ CosyVoice 等 |
-| `SF_API_KEY` | SiliconFlow 文本/视觉/嵌入通道 |
-| `DOUBAO_API_KEY` / `TENCENT_*` | 豆包 / 腾讯 TTS |
-| 未配置对应密钥 | TTS 退化为 edge-tts（免费在线合成）；对话需至少一种 LLM 通道 |
-
----
-
-## 📄 License
+## 📄 协议
 
 [Apache-2.0](LICENSE) · Copyright (C) 2024 LiveTalking@lipku (https://github.com/lipku/LiveTalking)
