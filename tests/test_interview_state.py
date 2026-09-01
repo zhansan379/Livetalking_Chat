@@ -47,6 +47,7 @@ class InterviewStateTest(unittest.TestCase):
         orig_score = tools_mod.score_answer
         orig_sec = tools_mod.score_section
         orig_report = tools_mod.build_report
+        orig_route = tools_mod._route_dialogue
 
         async def _fake_section(cfg, section, role, level, resume_text, jd_text):
             return [dict(q) for q in self.Q]
@@ -66,15 +67,20 @@ class InterviewStateTest(unittest.TestCase):
                     "sections": [{"type": "trivia", "name": "八股文", "score": 8.0, "comment": "好"}],
                     "strengths": ["思路清晰"], "improvements": [], "suggested_topics": ["性能优化"]}
 
+        async def _fake_route(cfg, stype, transcript):
+            return None  # 默认回退整段判分；路由场景在用例内单独打桩
+
         tools_mod.build_section = _fake_section
         tools_mod.score_answer = _fake_score
         tools_mod.score_section = _fake_sec_score
         tools_mod.build_report = _fake_report
-        self._orig = (orig_sheet, orig_score, orig_sec, orig_report)
+        tools_mod._route_dialogue = _fake_route
+        self._orig = (orig_sheet, orig_score, orig_sec, orig_report, orig_route)
 
     def tearDown(self):
         (tools_mod.build_section, tools_mod.score_answer,
-         tools_mod.score_section, tools_mod.build_report) = self._orig
+         tools_mod.score_section, tools_mod.build_report,
+         tools_mod._route_dialogue) = self._orig
 
     def _start(self, args=None):
         # 显式带岗位，避免走「先问岗位」澄清；要测澄清时传 {} 再单独断言
@@ -189,6 +195,69 @@ class InterviewStateTest(unittest.TestCase):
         out = self._start({})
         self.assertIn("模拟面试", out)
         self.assertEqual(self._state().status, "asking")
+
+
+    def test_end_mid_dialogue_preserves_answers(self):
+        # 复现实测故障：自我介绍对话段答了几段，用户没说『进入下一环节』直接 end，
+        # 之前会 0/0；现在应把当段 transcript 补评分并入 answers。
+        self.cfg.capabilities["interview"]["sections"] = [
+            {"type": "self_intro", "name": "自我介绍"}]
+        self._start()
+        self._answer("我叫小李，两年后端经验。")
+        self._answer("主要做网关与订单服务。")
+        out = asyncio.run(tools_mod._end({}, self.cfg, ctx=_Ctx(self.sid)))
+        self.assertIn("模拟面试结束", out)
+        self.assertNotIn("0 个作答", out)
+        self.assertIn("1 个作答", out)
+        st = self._state()
+        self.assertEqual(st.status, "finished")
+        answers = st.get("answers") or []
+        self.assertEqual(len(answers), 1)               # 对话段整段一条
+        self.assertEqual(answers[0]["section_type"], "self_intro")
+        self.assertEqual((answers[0]["eval"] or {}).get("score"), 7.0)
+
+    def test_end_mid_self_intro_routes_technical_to_project_anchors(self):
+        # 自我介绍里夹带了具体技术内容，用户在结束面试时没走「进入下一环节」→ 收尾应按
+        # 内容切段分到各环节：技术部分落到 project 走 4 维锚点评（score_answer=8），
+        # 而不是整段糊成一个「表达/结构/匹配」的自我介绍。
+        self.cfg.capabilities["interview"]["sections"] = [
+            {"type": "self_intro", "name": "自我介绍"}]
+
+        async def _route(cfg, stype, transcript):
+            return [
+                {"type": "self_intro", "name": "自我介绍", "topic": "背景",
+                 "content": "我叫小李，两年后端经验。"},
+                {"type": "project", "name": "项目问答", "topic": "网关限流",
+                 "content": "我实现了网关限流，用令牌桶。"},
+            ]
+        tools_mod._route_dialogue = _route
+
+        self._start()
+        self._answer("我叫小李，两年后端经验。")
+        self._answer("我做过网关，实现了限流。")
+        out = asyncio.run(tools_mod._end({}, self.cfg, ctx=_Ctx(self.sid)))
+        self.assertIn("2 个作答", out)          # 切段后按 2 条计，不再只算 1 段
+        answers = self._state().get("answers") or []
+        types = [a["section_type"] for a in answers]
+        self.assertIn("self_intro", types)
+        self.assertIn("project", types)         # 技术内容被路由到项目问答
+        proj = next(a for a in answers if a["section_type"] == "project")
+        self.assertEqual((proj["eval"] or {}).get("score"), 8.0)   # 走 score_answer 4 维
+        self.assertIn("网关限流", str(proj.get("question", {}).get("text", "")))
+
+    def test_end_after_next_section_no_duplicate(self):
+        # 对话段已用 next_section 判分推进后 end，不得因收拢逻辑二次计分。
+        self.cfg.capabilities["interview"]["sections"] = [
+            {"type": "self_intro", "name": "自我介绍"},
+            {"type": "project", "name": "项目问答", "count": 1}]
+        self._start()
+        self._answer("我叫小李，两年后端经验。")
+        asyncio.run(tools_mod._next_section({}, self.cfg, ctx=_Ctx(self.sid)))
+        # 现在停在 project 离散段，直接 end
+        out = asyncio.run(tools_mod._end({}, self.cfg, ctx=_Ctx(self.sid)))
+        self.assertIn("模拟面试结束", out)
+        answers = self._state().get("answers") or []
+        self.assertEqual(len(answers), 1)               # 仅 self_intro 一条，无重复
 
 
 if __name__ == "__main__":

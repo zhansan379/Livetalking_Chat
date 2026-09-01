@@ -18,7 +18,12 @@ from utils.logger import logger
 from capabilities.interview.state import (
     InterviewState, DEFAULT_SECTIONS, SECTION_TYPES, DIALOGUE_TYPES,
 )
-from capabilities.interview.eval import score_answer, score_section, build_report
+from capabilities.interview.eval import (
+    score_answer, score_section, build_report, _extract_json_dict,
+)
+
+# 自我介绍收尾时可按内容路由到的环节（technical 内容交给对应锚点评分）
+_ROUTE_TYPES = ("self_intro", "project", "trivia")
 from capabilities.interview.recall import build_section
 
 # 每会话一把锁（进程内缓存），保证同会话 handler 串行写状态
@@ -254,17 +259,130 @@ async def _answer(args, cfg, ctx=None):
 def _dialogue_ack(stype: str) -> str:
     """对话段 answer 后的轻量确认（引导面试官 persona 继续）。"""
     if stype == "self_intro":
-        return ("（已记录自我介绍。可结合候选人所述与简历继续追问；"
-                "候选人想结束本环节时说『进入下一环节』。）")
+        return ("（已记录自我介绍。继续追问，或在自我介绍实质聊够、候选人开始转入技术/项目细节时"
+                "主动调用 interview.next_section 结束本环节、判分并进入项目问答，不必等候选人开口。）")
     if stype == "reverse_qa":
         return ("（已记录这条提问。请作为招聘方专业作答；"
                 "候选人想结束反问环节时说『进入下一环节』。）")
     return "（已记录。请继续本环节互动。）"
 
 
+async def _route_dialogue(cfg, stype: str, transcript: str) -> list[dict] | None:
+    """把滞留的自我介绍按内容切段并标注应归属环节（fix：技术内容不再糊成一段自我介绍）。
+
+    返回 [{type,name,topic,content}]（最多 4 段）；解析失败/无可用结果返回 None，
+    由调用方回退为整段按原环节判分。仅 self_intro 需要（reverse_qa 无技术自答）。
+    """
+    if stype != "self_intro":
+        return None
+    from infra_ai import async_call_llm
+    prompt_msgs = [
+        {"role": "system", "content": (
+            "候选人的『自我介绍』环节里既讲了个人背景，也可能夹带了具体的项目/技术细节。"
+            "请把这整段发言按内容切分为若干要点，每个要点标注它本应归属的面试环节与一句主题。\n"
+            "归属规则：个人背景/经历概览/技能亮点/岗位动机 → self_intro（自我介绍）；"
+            "具体项目深挖（背景/难点/方案/结果/某技术实现）→ project（项目问答）；"
+            "某概念/原理的讲解（解释这是什么、怎么工作）→ trivia（八股文）。\n"
+            "返回严格 JSON："
+            "{\"routed\":[{\"type\":\"self_intro\"|\"project\"|\"trivia\","
+            "\"name\":\"环节名\",\"topic\":\"一句话主题\",\"content\":\"候选人对该点的原话/摘要\"}]}。\n"
+            "content 尽量用候选人的原话，每段不超过 600 字，最多 4 段，不足就少切。只输出 JSON。"
+        )},
+        {"role": "user", "content": f"候选人自我介绍环节发言：\n{(transcript or '').strip()[:3000]}"},
+    ]
+    try:
+        raw = await async_call_llm(
+            prompt_msgs, use_json=True,
+            extra={"kind": "interview_eval_route", "type": stype},
+            model_kwargs={"max_tokens": 1024},
+        )
+        d = _extract_json_dict(raw)
+        routed = d.get("routed") if isinstance(d, dict) else None
+        out = []
+        for it in (routed or []):
+            if not isinstance(it, dict):
+                continue
+            t = str(it.get("type") or "").strip()
+            if t not in _ROUTE_TYPES:
+                continue
+            content = (str(it.get("content") or "")).strip()
+            if not content:
+                continue
+            out.append({
+                "type": t,
+                "name": str(it.get("name") or _SECTION_NAMES.get(t, t)),
+                "topic": str(it.get("topic") or "")[:80],
+                "content": content[:600],
+            })
+            if len(out) >= 4:
+                break
+        return out or None
+    except Exception as e:  # noqa: BLE001 - 切分失败回退整段判分，不崩
+        logger.warning("interview route dialogue failed, fallback: %s", e)
+        return None
+
+
+async def _collect_open_dialogue(st) -> None:
+    """收尾时把「仍停留的未判分对话段」补判分并落入 answers。
+
+    若用户中途结束（没说『进入下一环节』就 interview.end），自我介绍/反问里已积累的
+    发言会被 _finalize 直接丢弃显示成 0 作答——这里补判，让真实发言被计分。
+    自我介绍里夹带的项目/技术内容：先 _route_dialogue 按内容切段、分到 self_intro/
+    project/trivia 各自锚点评分，而不是糊成整段「表达/结构/匹配」（fix 2）。
+    已由 _next_section 判分过的当段跳过，避免重复计。
+    """
+    if not (st.is_active and st.is_dialogue()):
+        return
+    stype = st.section_type()
+    existing = st.get("answers") or []
+    if any((a.get("section_type") == stype
+            and str((a.get("eval") or {}).get("question_id", "")).startswith("section-"))
+           for a in existing):
+        return
+    turns = [t.get("text", "").strip() for t in st.section_items()
+             if t.get("role") == "candidate" and t.get("text", "").strip()]
+    if not turns:
+        return
+    sec = st.current_section()
+    transcript = "\n".join(f"候选人：{t}" for t in turns)
+    routed = await _route_dialogue(st.cfg, stype, transcript)
+    new_answers: list = []
+    if routed:
+        for i, r in enumerate(routed):
+            rtype = r["type"]
+            if rtype == "self_intro":
+                ev = await score_section(st.cfg, {"type": "self_intro", "name": r["name"]},
+                                         r["content"])
+            else:  # project / trivia → 按技术锚点 4 维判分，question 用合成题
+                ev = await score_answer(st.cfg, {
+                    "id": f"routed-{rtype}-{i}",
+                    "text": f"【{r['name']}·{r['topic']}】候选人就这个话题的作答",
+                    "category": r["name"], "type": "technical", "rubrics": {}},
+                    r["content"])
+            new_answers.append({
+                "question": {"text": f"【{r['name']}·{r['topic']}】", "type": rtype},
+                "answer": r["content"], "eval": ev,
+                "section_type": rtype, "section_name": r["name"],
+            })
+    else:
+        eval_result = await score_section(st.cfg, sec, transcript)
+        new_answers.append({
+            "question": {"text": f"【{sec.get('name')}】这段自由交流", "type": sec.get("type")},
+            "answer": transcript, "eval": eval_result,
+            "section_type": sec.get("type"), "section_name": sec.get("name"),
+        })
+    async with _lock(st.session_id):
+        st.load()
+        answers = list(st.get("answers") or [])
+        answers.extend(new_answers)
+        await st.save({"answers": answers})
+
+
 async def _finalize(st, sid, cfg) -> str:
     """收敛到 finished：生成按环节分段的报告 + 落盘 + 可选写一条长期记忆。"""
     sections = st.get("sections") or []
+    await _collect_open_dialogue(st)
+    st.load()  # 刷新刚补入的对话段评分
     answers = st.get("answers") or []
     report = await build_report(cfg, sections, answers,
                                 st.get("role"), st.get("level"), st.get("jd_text"))
@@ -273,14 +391,14 @@ async def _finalize(st, sid, cfg) -> str:
         await st.save({"status": "finished", "finished_at": __import__("datetime").datetime.now().isoformat(),
                        "report": report})
     _maybe_remember(cfg, st, report)
-    return _format_report(report, len(answers), len(answers))
+    return _format_report(report, len(answers))
 
 
-def _format_report(report: dict, n_total: int, n_ans: int) -> str:
+def _format_report(report: dict, n_ans: int) -> str:
     dim = report.get("dimension_avg") or {}
     dim_s = "  ".join(f"{k}:{dim[k]}" if dim.get(k) is not None else f"{k}:-" for k in ("理解", "表达", "逻辑", "完整"))
     lines = [
-        f"模拟面试结束（{n_ans}/{n_total} 个作答）。总评：{report.get('summary')}",
+        f"模拟面试结束（共 {n_ans} 个作答）。总评：{report.get('summary')}",
         f"分项均分：{dim_s}",
     ]
     secs = report.get("sections") or []
