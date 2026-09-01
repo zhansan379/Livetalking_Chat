@@ -677,6 +677,9 @@
     var pollTimer = null;            // /is_speaking 轮询
     var suppressUntil = 0;           // 回声抑制截止时间戳(ms)
     var suppressMs = 800;            // 数字人开口后抑制自回声时长
+    var bargeArmed = false;          // onSpeechStart 只是能量触发：先「武装」，确认是真声才真打断
+    var bargeWatchdog = null;        // 限时窗口，窗口内未确认成真声则撤销武装（防误触破坏未播句）
+    var BARGE_WATCHDOG_MS = 700;     // 从能量触发到 VAD 确认「这是真说话」的最长等待
     var wakeOn = false;              // 关键词唤醒开关（底栏「唤醒」按钮按下）
     var wakeArmed = false;           // 是否正等待唤醒词（收到后端 wake 后置 false 进入正常通话）
     var wakeKeyword = '';            // 开启词文本（来自设置 #wakeword）
@@ -1038,17 +1041,35 @@
             },
             onSpeechStart: function () {
                 if (!callOn) return;
-                if (bargeInEnabled() && avatarSpeaking && Date.now() > suppressUntil) {
-                    interruptAvatar();
-                    suppressUntil = Date.now() + suppressMs;
-                    setCallStatus('已打断数字人...', 'interrupt');
-                }
+                // 只「武装」打断、先不掐人：onSpeechStart 是纯能量触发，极易被回声/噪音
+                // 误触。真打断等 onSpeechRealStart（VAD 确认是真声）再执行；onVADMisfire
+                // 或超时会撤销武装 —— 这样误触根本不会走 interruptAvatar，也就不会把
+                // 已经合成、排队还没播完的句子 flush_talk 清掉（上次「播一半」就是这么丢的）。
+                bargeArmed = true;
+                if (bargeWatchdog) clearTimeout(bargeWatchdog);
+                bargeWatchdog = setTimeout(function () {
+                    bargeArmed = false;   // 落在窗口内没确认成真声 → 作废本次武装，不打断
+                }, BARGE_WATCHDOG_MS);
                 if (!draining) setCallStatus('说话中...', 'speaking');
             },
             onSpeechRealStart: function () {
+                // VAD 较确信是真说话（非回声/误触）才真正打断。talk-over 仍及时，因为
+                // Silero 的 preSpeechPad 已把开头声音缓存进 onSpeechEnd 的 audio，转写不丢字。
+                if (bargeArmed) {
+                    if (bargeWatchdog) { clearTimeout(bargeWatchdog); bargeWatchdog = null; }
+                    bargeArmed = false;
+                    if (bargeInEnabled() && avatarSpeaking && Date.now() > suppressUntil) {
+                        interruptAvatar();
+                        suppressUntil = Date.now() + suppressMs;
+                        setCallStatus('已打断数字人...', 'interrupt');
+                    }
+                }
                 if (wakeArmed || !draining) setCallStatus(wakeArmed ? '待唤醒...' : '收集中...', wakeArmed ? 'listening' : 'collecting');
             },
             onVADMisfire: function () {
+                // VAD 判定刚才是个假警报 → 撤销打断武装，数字人把没说完的继续讲完。
+                if (bargeArmed) bargeArmed = false;
+                if (bargeWatchdog) { clearTimeout(bargeWatchdog); bargeWatchdog = null; }
                 if (wakeArmed) { if (wakeOn) setCallStatus('待唤醒：请说「' + wakeKeyword + '」...', 'listening'); return; }
                 if (!draining) setCallStatus('正在倾听...', 'listening');
             },
@@ -1329,6 +1350,8 @@
         avatarSpeaking = false;
         utteranceQueue = [];
         draining = false;
+        bargeArmed = false;
+        if (bargeWatchdog) { clearTimeout(bargeWatchdog); bargeWatchdog = null; }
         wakeOn = false; wakeArmed = false;
         _persistWakeOn();          // 记住「唤醒已关闭」
         closeKwsWS();
