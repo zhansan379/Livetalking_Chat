@@ -70,6 +70,10 @@ https://github.com/user-attachments/assets/36e5465a-6636-48ef-8d5a-8a11c7ace7df
 
 - [ ] 与claude code或codex的集成，别人都有的功能，我就没必要写了吧qwq
 
+- [ ] 自进化，参照hermes自己构建skill或者提高强化学习路径
+
+- [ ] 添加抖音直播/哔哩哔哩直播等接入场景
+
 
 ### 三、后台自动跑的
 
