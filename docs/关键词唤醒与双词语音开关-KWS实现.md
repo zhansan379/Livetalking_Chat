@@ -68,6 +68,8 @@
   - `onKwsSleep()`：`callOn=false; wakeArmed=true; _sleptAt=now`，清队列、停轮询，播报「已关闭」，回到待命可无手再唤醒。
   - `onFrameProcessed` 喂帧条件由 `wakeOn && wakeArmed` 放宽为 `wakeOn`（对话中也送帧给 KWS）。
   - `onSpeechEnd` 加 `_sleptAt` 丢窗，避免关闭词发成普通语音给 LLM。
+- **改词热更**：`#wakeword`/`#sleepword` 的 `change` → `_onWakewordsChange()` 同步 globals + 保存 localStorage；若 `wakeOn` 尚在监听则 `openKwsWS()` **重开连接**，后端立即换用新词（KWS 关键词是连接级的，须重开才生效；连接内状态不破坏）。
+- **断线自愈**：`ws.onclose` 时若 `wakeOn` 仍为真（说明非有意关闭——`stopCall`/`startCall`/`onKwsError` 都先置 `wakeOn=false`）→ `setTimeout(openKwsWS, 1500)` 自动重拉连接并沿用当前关键词；`openKwsWS` 每次重开都重读输入框最新值。后端重启/网络闪断可自动恢复。
 - **手动「开启通话」**不变：`startCall` 会先关掉唤醒（`wakeOn=false`），走原 ASR 管线。
 
 ## 4. 模型获取与配置

@@ -684,6 +684,7 @@
     var wakeWS = null;               // /api/kws/ws WebSocket
     var _kwsBatch = [];              // 待转给后端 KWS 的 16k 帧缓冲
     var _kwsFlushTimer = null;       // 批量发送定时器
+    var _kwsRetryTimer = null;       // 断线自动重拉定时器
     var _wokeAt = 0;                 // 命中开启词时间戳(ms)，用于丢弃开启词本句语音
     var _sleptAt = 0;                // 命中关闭词时间戳(ms)，用于丢弃关闭词本句语音
 
@@ -879,12 +880,22 @@
         if (elW) {
             try { v = localStorage.getItem(_KWS_SK_WAKE); } catch (e) {}
             if (v && v.trim()) { elW.value = v.trim(); }
-            elW.addEventListener('change', _persistWakewords);  // 失焦/回车时保存
+            elW.addEventListener('change', _onWakewordsChange);  // 失焦/回车：保存并热更
         }
         if (elS) {
             try { v = localStorage.getItem(_KWS_SK_SLEEP); } catch (e) {}
             if (v && v.trim()) { elS.value = v.trim(); }
-            elS.addEventListener('change', _persistWakewords);
+            elS.addEventListener('change', _onWakewordsChange);
+        }
+    }
+    // 用户改动「开启词/关闭词」→ 保存到 localStorage；若正在监听唤醒，重开 KWS 连接热应用新词
+    function _onWakewordsChange() {
+        wakeKeyword = _wakeKeyword();
+        sleepKeyword = _sleepKeyword();
+        _persistWakewords();
+        if (wakeOn) {
+            if (_kwsRetryTimer) { clearTimeout(_kwsRetryTimer); _kwsRetryTimer = null; }
+            openKwsWS();
         }
     }
 
@@ -937,9 +948,10 @@
         var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
         var ws = new WebSocket(proto + location.host + '/api/kws/ws?session=' + encodeURIComponent(getSessionId()));
         wakeWS = ws;
-        var kw = wakeKeyword;
+        var kw = _wakeKeyword() || wakeKeyword;      // 每次(重)开都取最新输入值
+        var sk = _sleepKeyword() || sleepKeyword;
         ws.onopen = function () {
-            var kws = [kw].concat(sleepKeyword ? [sleepKeyword] : []);
+            var kws = [kw].concat(sk ? [sk] : []);
             try { ws.send(JSON.stringify({ keywords: kws })); } catch (e) { }
         };
         ws.onmessage = function (ev) {
@@ -949,7 +961,14 @@
             else if (m.type === 'error') onKwsError(m.reason);
             else if (m.type === 'ready' && wakeArmed) setCallStatus('待唤醒：请说「' + kw + '」...', 'listening');
         };
-        ws.onclose = function () { if (wakeWS === ws) wakeWS = null; };
+        ws.onclose = function () {
+            if (wakeWS === ws) wakeWS = null;
+            // 非有意关闭（stopCall/startCall/onKwsError 都已先置 wakeOn=false）→ 自动重拉
+            if (wakeOn && !wakeWS) {
+                if (_kwsRetryTimer) clearTimeout(_kwsRetryTimer);
+                _kwsRetryTimer = setTimeout(openKwsWS, 1500);
+            }
+        };
         ws.onerror = function () { try { ws.close(); } catch (e) { } };
     }
 
