@@ -82,6 +82,11 @@ class MusicPlayer:
         # ── 在线播放（配合 meting MCP 工具；在线单曲不进本地 _playlist）──
         self._online = False        # 当前曲目是「在线流」而非本地文件
         self._online_name: str | None = None
+        self._online_url: str | None = None   # 在线可播放链接（供循环/续播重播）
+
+        # ── 循环播放：默认只播一遍（列表顺序播到底或单曲放完即停）；
+        #    仅当用户明确说「循环播放/单曲循环」时 self._loop=True 才循环 ──
+        self._loop = False
 
         # ── 音量闪避 ──
         self._duck = True
@@ -176,6 +181,22 @@ class MusicPlayer:
             return self._cmd_next()
         if action in ("prev", "previous", "上一首"):
             return self._cmd_prev()
+        if action in ("loop", "循环", "循环播放", "单曲循环", "反复播放", "重播"):
+            # 循环开关：配 loop（bool：true=开/false=关）则按值设定；缺省则切换当前状态
+            enabled = cfg.get("loop")
+            if enabled is None:
+                enabled = cfg.get("enabled")
+            if enabled is None:
+                self._loop = not self._loop
+            elif isinstance(enabled, bool):
+                self._loop = enabled
+            else:
+                val = str(enabled).strip().lower()
+                self._loop = val in ("1", "true", "yes", "on", "开", "开启", "是", "循环", "单曲循环", "重播")
+            state = "已开启" if self._loop else "已关闭"
+            suffix = ("放完会自动续播/循环，不会自行停止。" if self._loop
+                      else "每首只播一遍，放完即停。（说『循环播放』可开启循环）")
+            return self._say(f"（循环播放{state}。{suffix}）")
         if action in ("volume", "vol", "音量"):
             v = int(cfg.get("volume", round(self._volume * 100)))
             self._volume = _clamp(v / 100.0, 0.0, 1.0)
@@ -251,10 +272,12 @@ class MusicPlayer:
 
     def _cmd_status(self) -> str:
         if not self._has_track():
-            return f"（当前没有播放音乐。目录『{self._scan_dir_label()}』共 {len(self._playlist)} 首，说『播放一首』即可。）"
+            loop = "，循环已开" if self._loop else ""
+            return f"（当前没有播放音乐{loop}。目录『{self._scan_dir_label()}』共 {len(self._playlist)} 首，说『播放一首』即可。）"
         vol = int(round(self._volume * 100))
         state = "播放中" if not self._paused else "已暂停"
-        return f"（当前{state}：{self._track_name()}，音量 {vol}%，目录共 {len(self._playlist)} 首。）"
+        loop = "，循环已开" if self._loop else ""
+        return f"（当前{state}：{self._track_name()}，音量 {vol}%，目录共 {len(self._playlist)} 首{loop}。）"
 
     # ── 曲目/resolution ────────────────────────────────────────────────────
     def _scan(self) -> list[str]:
@@ -294,6 +317,7 @@ class MusicPlayer:
         if not url or not str(url).strip():
             return False
         self._online = True
+        self._online_url = str(url)
         self._online_name = (name or "").strip() or "在线音乐"
         self._paused = False
         return self._start_ffmpeg(str(url))
@@ -347,6 +371,7 @@ class MusicPlayer:
         self._track_path = None
         self._online = False
         self._online_name = None
+        self._online_url = None
 
     def _download_rescan(self, base: str):
         """下载成功后把新文件并入本地列表，让它可以立即『播放』。
@@ -408,12 +433,25 @@ class MusicPlayer:
             data = b""
         if not data:
             if self._proc.poll() is not None:
-                # 一首放完 → 自动连播；在线单曲放完即停，不进本地列表
+                # 一曲放完。
+                #   - 默认（非循环）：只播放一遍。本地列表顺序播到最后一首即停；
+                #     在线单曲放完即停（不进本地列表）。
+                #   - 循环模式（用户说「循环播放」后 self._loop=True）：
+                #     本地列表接回第一首继续（列表循环）；在线单曲循环重播同一链接。
                 was_online = self._online
+                url = self._online_url if was_online else None
+                name = self._online_name
                 self._close_track()
-                if not was_online and self._playlist:
-                    self._index = (self._index + 1) % len(self._playlist)
-                    self._open_track(self._index)
+                if self._loop:
+                    if was_online and url:
+                        self._open_url(url, name)
+                    elif not was_online and self._playlist:
+                        self._index = (self._index + 1) % len(self._playlist)
+                        self._open_track(self._index)
+                else:
+                    if not was_online and self._playlist and self._index < len(self._playlist) - 1:
+                        self._index += 1
+                        self._open_track(self._index)
                 return
             time.sleep(0.01)
             return
@@ -599,9 +637,13 @@ def _music_tool_specs() -> list[dict]:
                 "在线播放（action=play_online）：当用户点名的歌本地目录里没有、或明确要播网上某首歌时，"
                 "先按平台用 mcp_meting_search 搜到歌曲拿到 song id，再用 mcp_meting_url 拿可播放链接，"
                 "最后调本工具 action=play_online、url=该链接、name=歌名（可选）。"
-                "注意该链接是短期有效的，拿到后应立即播放。在线单曲放完即停。\n"
+                "注意该链接是短期有效的，拿到后应立即播放。\n"
+                "播放模式：默认【只播放一遍】——本地列表顺序播到最后一首即停、在线单曲放完即停。"
+                "只有用户明确说『循环播放 / 单曲循环』时才用 action=loop 开启循环："
+                "本地列表循环续播、在线单曲循环重播。要关闭说『取消循环』即可（action=loop 不再传 loop，或 loop=false）。\n"
                 "动作（action）：\n"
                 "  - play（默认）：开始/继续播放本地或当前曲目。\n"
+                "  - loop：切换循环播放（配 loop=true/false 显式开/关；不配则切换当前状态）。\n"
                 "  - play_online：在线播放。配 url 参数（必填，mcp_meting_url 拿到的可播放链接）、"
                 "name（可选，显示用歌名，如『稻香』）。\n"
                 "  - download：把在线链接下载保存到本地（离线收听，自己已购买的歌曲）。"
@@ -622,11 +664,12 @@ def _music_tool_specs() -> list[dict]:
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["play", "play_online", "download", "pause", "resume", "stop", "next", "prev", "volume", "list", "status"],
+                        "enum": ["play", "play_online", "download", "pause", "resume", "stop", "next", "prev", "volume", "list", "status", "loop"],
                         "description": "play=播放/继续（默认）；play_online=在线播放（配 url 参数）；"
                                        "download=下载到本地离线收听（配 url + name）；"
                                        "pause=暂停；resume=继续播放；stop=停止；next=下一首；prev=上一首；"
-                                       "volume=调音量（配 volume 参数）；list=列出本地音乐目录；status=查播放状态。",
+                                       "volume=调音量（配 volume 参数）；list=列出本地音乐目录；status=查播放状态；"
+                                       "loop=循环播放开关（配 loop=true/false 开/关；不配则切换，仅用户点名『循环播放』时用）。",
                     },
                     "target": {
                         "type": "string",
@@ -646,6 +689,11 @@ def _music_tool_specs() -> list[dict]:
                     "volume": {
                         "type": "integer",
                         "description": "仅 volume 使用：目标音量 0-100 整数。",
+                    },
+                    "loop": {
+                        "type": "boolean",
+                        "description": "仅 loop 使用：true=开启循环播放（放完自动续播/重播）；"
+                                       "false=关闭（每首只播一遍）。缺省则切换当前循环状态。",
                     },
                 },
                 "required": [],
