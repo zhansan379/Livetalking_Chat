@@ -8,6 +8,7 @@ import json
 import asyncio
 import re
 from utils.logger import logger
+from server.action_prep import list_usable_emotions
 
 
 # ─── 回答清洗：只保留纯文本与标点 ──────────────────────────────────────────
@@ -71,8 +72,8 @@ async def _probe_tone(agent, message: str, emotion_names=("happy", "surprised", 
 
     这是一个廉价的前置"语气探测器"：只输出简短 JSON，作为 datainfo['tts'] 的侧信道
     补充（context_texts 语音指令 / pitch / speech_rate / loudness_rate）。
-    - emotion_names 取当前配置 emotion.names（只有底座的表情才会被放行），LLM 只在
-      这些候选内选或 neutral，避免探测出无底座的表情；
+    - emotion_names 由 data/actions 派生（只有底座且启用且绑定当前形象的表情才会被放行），
+      LLM 只在这些候选内选或 neutral，避免探测出无底座的表情；
     - 手动传入的 datainfo['tts'] 键优先级更高（上层用 setdefault 合并，不覆盖已存在键）；
     - LLM 判定"无特别情绪"或任何探测失败 → 返回 {}，保持全局 doubao_tone 默认，绝不
       阻塞/劣化正常回复。
@@ -235,22 +236,25 @@ async def stream_llm_chat(avatar_session, session_id: str, message: str,
 
     # ── LLM 语气/表情钩子（LLM 自动驱动的语气调整 + 表情编排）─────────────
     # 触发条件（满足任一即探测）：doubao TTS 且 doubao_tone.llm_tone 开启（供 TTS 语气）；
-    # 或 表情动作 emotion.enabled 开启（供渲染层切基地帧——纯视觉诉求，不该被 TTS 引擎绑架）。
+    # 或 当前形象存在可用表情底座（list_usable_emotions 派生 data/actions 的 manifest，
+    # ——纯视觉诉求，不该被 TTS 引擎绑架）。
     # 探测结果填共享 datainfo：语气键进 datainfo['tts']，表情基调进 datainfo['emotion']。
     # 并发执行：以 asyncio.create_task 启动，后台随句填结果，**不阻塞**主回答；
     # 任务内部已 try/except 兜底，绝不向主链路抛异常，fire-and-forget 由回调兜底记录。
     try:
         _opt = getattr(avatar_session, "opt", None)
         _tone_cfg = getattr(_opt, "doubao_tone", None) or {}
-        _emotion_cfg = getattr(_opt, "emotion", None) or {}
+        _avatar_id = getattr(_opt, "avatar_id", "")
+        # 候选表情 = 对当前形象可用的表情底座（自动筛 manifest.enabled + 绑定）。
+        _emo_names = tuple(list_usable_emotions(_avatar_id))
+        _want_emotion = bool(_emo_names)
         _want_tone = (_opt and getattr(_opt, "tts", "") == "doubao"
                       and isinstance(_tone_cfg, dict) and _tone_cfg.get("llm_tone"))
-        _want_emotion = bool(_emotion_cfg.get("enabled"))
         if _want_tone or _want_emotion:
-            # 只把有底座的候选表情名单交给探测器，LLM 不会输出无底座的情绪（如占位 happy）。
-            _emo_names = tuple(_emotion_cfg.get("names") or []) if _want_emotion else ()
+            # 表情关闭时传哨兵候选：避免 _probe_tone 空候选回落到默认四情绪而误带 emotion。
+            _emo_arg = _emo_names if _want_emotion else ("__none__",)
             _tone_task = asyncio.create_task(
-                _probe_tone_into(agent, message, datainfo, emotion_names=_emo_names))
+                _probe_tone_into(agent, message, datainfo, emotion_names=_emo_arg))
             _tone_task.add_done_callback(
                 lambda t: t.exception() if not t.cancelled() else None)
     except Exception as e:  # noqa: BLE001 - 探测钩子失败不影响回复

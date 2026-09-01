@@ -69,6 +69,9 @@ def parse_args():
     # ─── 自定义动作和多形象 ────────────────────────────────────────────
     parser.add_argument('--customvideo_config', type=str, default='',
                         help="custom action json")
+    # 表情动作一次性模式：动作单向播一遍后自动回中性（不等静音），默认关闭=保持来回镜像循环
+    parser.add_argument('--emotion_once', action='store_true',
+                        help="emotion action plays once, single direction, then auto-back to neutral")
 
     # ─── TTS ───────────────────────────────────────────────────────────
     parser.add_argument('--tts', type=str, default='edgetts',

@@ -15,18 +15,9 @@ batch_size: 16
 
 # -------- Custom Actions ----------------------------------------------------------
 customvideo_config: ''
-
-# -------- 表情动作（说话时按情绪切基地帧）-----------------------------------------
-# 开启后：每轮回答经 LLM 探测 emotion，说话时把「基地序列」切成对应表情底座视频
-# （换一套底座帧，口型照常贴脸；不再是 customopt 那种与说话互斥的抢插）。
-# 底座数据：先跑 `python scripts/prep_emotions.py`，用 sample_videos 生成
-# data/actions/<emotion>/ 。neutral = 默认形象本来的底座，无需单独提供。
-emotion:
-  enabled: true                # true=开；false=完全关闭，行为回退到旧有说话
-  names: [sad]                            # 候选表情；LLM 只会输出这些之一或 neutral（只有 sad 有底座）
-  sample_videos:               # 首次用样例视频自动生成底座序列（可选；供 prep 脚本用）
-                               # 只保留实际要用的表情；其他已删掉的不在此列
-    sad: "D:\\Download\\browserDownload\\海螺_视频_做出委屈的表情，不说_550856995680083969 (1).mp4"
+# 表情动作一次性模式：动作单向播一遍后自动回中性（不等静音），同一句内不重播。
+# false/缺省=保持原来的【来回镜像循环】（动作持续循环直到静音回中性）。
+emotion_once: true
 
 # -------- TTS ----------------------------------------------------------
 tts: doubao                   # edgetts / gpt-sovits / cosyvoice / fishtts / tencent / doubao / indextts2 / azuretts / qwentts

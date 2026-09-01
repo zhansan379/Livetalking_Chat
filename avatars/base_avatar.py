@@ -47,6 +47,7 @@ from fractions import Fraction
 
 from utils.logger import logger
 from utils.image import read_imgs,mirror_index
+from server.action_prep import list_usable_emotions
 
 # class State(Enum):
 #     INIT=0
@@ -96,12 +97,19 @@ class BaseAvatar:
         self.__loadcustom()
 
         # ── 表情动作（说话时按情绪切基地帧：换一套基地序列，而非抢插）────
-        # emotion=config.yaml 的 emotion 块；None/未 enabled = 功能关，行为回退现状。
-        self.emotion = getattr(opt, 'emotion', None) or None
+        # 启用与否/候选列表不再读 config.yaml，由 data/actions/<em>/action_info.json
+        # 派生：存在可用底座即启用；想关掉单个表情就把其 manifest 的 enabled 设 false。
         self._neutral_cycles = {}      # 默认基地序列快照（sub-avatar init 尾部调用 _snapshot_neutral_cycles）
         self._emotion_cache = {}       # emotion → cycle dict（懒加载；加载失败记为 None 容错）
+        self._emotion_bind_cache = {}  # emotion → 绑定的头像 id（None=无 manifest，视为全局/遗留）
         self._cur_emotion = None       # 当前生效表情；None = 中性默认形象
         self._last_speech_ts = 0.0     # 最近说话帧时刻（持续静音超时才回中性，避免句间小间隔抖动）
+        # 一次性表情开关（最终决定见能能力目录/server 参数下发；默认关闭保持【来回镜像循环】）：
+        #   emotion_once=True → 动作单向播一遍后自动回中性（不等静音）。
+        #   触发粒度=「一次回答」：同一回复(trace_id)内只播一次，即使该回复被切成多句；
+        #   下次新回答(trace_id 变化)才重新触发。默认关闭=原镜像循环。
+        self.emotion_once_enabled = bool(getattr(opt, "emotion_once", False))
+        self._emo_played_reply = None  # 已播过一次性表情的那次回复标识(trace_id)；跨回复自然失效
         # 底座溶解过渡：进出表情都做 ~0.3s addWeighted 渐变，避免一帧硬切（不同形象间
         # 呈现为形变溶解；同形象则是最自然的情绪渐变）。由 process_frames 检测 _cur_emotion
         # 变化后驱动。
@@ -405,9 +413,33 @@ class BaseAvatar:
             logger.exception("emotion: load cycle %s failed", emotion)
             return None
 
+    def _emotion_binding(self, emotion):
+        """返回该表情底座绑定的头像 id；无 manifest/未绑定 = None（视为全局/遗留，放行）。
+
+        读 data/actions/<emotion>/action_info.json（generate_action 生成的绑定记录），
+        首次读取后缓存，避免推理线程每切一次就读文件。
+        """
+        if emotion not in self._emotion_bind_cache:
+            bind = None
+            import json, os
+            p = os.path.join("data/actions", emotion, "action_info.json")
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    bind = (json.load(f).get("bind_avatar") or "").strip() or None
+            except Exception:  # noqa: BLE001 - manifest 缺失/损坏按全局放行（容忍遗留 sad）
+                bind = None
+            self._emotion_bind_cache[emotion] = bind
+        return self._emotion_bind_cache.get(emotion)
+
     def set_emotion(self, emotion):
-        """把当前说话的基地序列切成指定表情；None/neutral 恢复默认形象（功能关闭时静默返回）。"""
-        if not getattr(self, "emotion", None) or not self.emotion.get("enabled"):
+        """把当前说话的基地序列切成指定表情；None/neutral 恢复默认形象。
+
+        候选与启用由 data/actions 派生（list_usable_emotions，按当前形象筛 enabled+绑定）；
+        无可用表情底座 = 功能关闭，静默返回。
+        """
+        _aid = getattr(self.opt, "avatar_id", "")
+        names = list_usable_emotions(_aid)
+        if not names:                       # 系统关闭（当前形象无可用表情底座）
             return
         if emotion in (None, "", "neutral"):
             if self._cur_emotion is not None:
@@ -416,10 +448,17 @@ class BaseAvatar:
                     setattr(self, a, v)
                 logger.info("emotion: reset -> neutral")
             return
-        names = self.emotion.get("names") or []
         if emotion not in names:
             return  # 不在候选表情集，保持现状
         if emotion == self._cur_emotion:
+            return
+        # 运行时强制绑定：该底座绑定了头像，且不是当前说话形象 → 拒绝切换（保持现状）。
+        bind = self._emotion_binding(emotion)
+        if bind is not None and bind != getattr(self.opt, "avatar_id", None):
+            logger.warning(
+                "emotion: %s 绑定到头像 %s，当前形象 %s，拒绝切换",
+                emotion, bind, getattr(self.opt, "avatar_id", None),
+            )
             return
         if emotion not in self._emotion_cache:
             self._emotion_cache[emotion] = self._load_emotion_cycle(emotion)
@@ -485,20 +524,35 @@ class BaseAvatar:
             # 贴回时却用新底座 → 人脸位置错位。整轮每句携带同一 emotion，set_emotion 按
             # _cur_emotion 去重，不会反复切换。
             _spk = not is_all_silence
+            _rep = None  # 本次回复标识(trace_id)：同一次回答的所有句共享，跨回答自动变化
             if _spk:
                 emo = None
                 for _af in audio_frames:
                     if _af.type == 0 and _af.userdata:
-                        emo = _af.userdata.get("emotion") or None
-                        if emo:
+                        if emo is None:
+                            emo = _af.userdata.get("emotion") or None
+                        if _rep is None:
+                            _rep = (_af.userdata.get("_obs") or {}).get("trace_id") or None
+                        if emo and _rep:
                             break
-                if emo and emo != getattr(self, "_cur_emotion", None):
+                # 一次性表情去重：按「一次回答(trace_id)」判定，而非静音；同一回复内只播一次。
+                _already = bool(emo and self.emotion_once_enabled and _rep is not None
+                                and self._emo_played_reply == _rep)
+                if emo and emo != getattr(self, "_cur_emotion", None) and not _already:
                     self._drain_res_queue()   # 清掉用旧底座产出的在途预测，避免残留错位帧
                     index = 0                 # 新底座从头编排帧
                     self.set_emotion(emo)
+                    # 触发当下就锁住该次回复：之后同一回复的任意句子都视为已播过，
+                    # 即便动作未播满一遍、提前经 1.2s 静音回中性，也不会再重复触发。
+                    if _rep is not None:
+                        self._emo_played_reply = _rep
                 self._last_speech_ts = time.time()
             elif getattr(self, "_cur_emotion", None) is not None \
-                    and time.time() - getattr(self, "_last_speech_ts", 0.0) > 1.2:
+                    and time.time() - getattr(self, "_last_speech_ts", 0.0) > 1.2 \
+                    and not (self.emotion_once_enabled
+                             and index < self.get_avatar_length()):
+                # 一次性表情：在【播满一整遍(index≥帧数)】之前，静音空档不提前回中性，
+                # 让动作借句子间隙继续往前走满一遍；播满后由下方 completion 块收尾回中性。
                 self.set_emotion(None)        # 持续静音 → 回中性
 
             if is_all_silence: #全为静音数据，只需要取fullimg，不需要推理
@@ -522,7 +576,18 @@ class BaseAvatar:
                 for i, res_frame in enumerate(pred):
                     self.res_frame_queue.put((res_frame, audio_frames[i*2:i*2+2], mirror_index(length, index)))
                     index = index + 1
-                    
+
+            # 一次性表情(emotion_once)：动作单向播完一遍 → 自动回中性，不等 1.2s 静音。
+            # index≥当前底座帧数即「播完一遍」，随后回报该次回复(trace_id)已触发；
+            # 本回答剩余多句不再重触发（_emo_played_reply 去重），下次新回答才重新触发。
+            # 开关关闭时此块为空操作，保持原【镜像循环】语义。
+            if self.emotion_once_enabled:
+                cur_emo = getattr(self, "_cur_emotion", None)
+                if cur_emo is not None and index >= self.get_avatar_length():
+                    if _rep is not None:
+                        self._emo_played_reply = _rep
+                    self.set_emotion(None)
+
             if current_speaking != last_speaking:
                 logger.info(f"inference 状态切换：{'说话' if last_speaking else '静音'} → {'说话' if current_speaking else '静音'}")
                 last_speaking = current_speaking         
@@ -615,7 +680,21 @@ class BaseAvatar:
             if getattr(self, "_emo_alpha_from", None) is not None:
                 a = (time.time() - self._emo_transition_at) / _EMO_TR_DUR
                 if a < 1.0:
-                    combine_frame = cv2.addWeighted(self._emo_alpha_from, 1 - a, combine_frame, a, 0)
+                    from_f = self._emo_alpha_from
+                    # 底座尺寸不齐（表情底座帧尺寸可能 ≠ 当前底座）时，先把旧帧
+                    # 等比缩放(INTER_AREA 收缩/升采)到当前帧尺寸再淡出，避免
+                    # addWeighted 因两张图大小不同而崩线程。仅切换的那 0.3s 生效。
+                    if from_f.ndim == combine_frame.ndim and from_f.shape != combine_frame.shape:
+                        from_f = cv2.resize(
+                            from_f,
+                            (combine_frame.shape[1], combine_frame.shape[0]),
+                            interpolation=cv2.INTER_AREA,
+                        )
+                    if from_f.shape == combine_frame.shape:
+                        combine_frame = cv2.addWeighted(from_f, 1 - a, combine_frame, a, 0)
+                    else:
+                        # 通道数等仍不一致（理论少见）→ 放弃本帧淡出，直接硬切。
+                        self._emo_alpha_from = None
                 else:
                     self._emo_alpha_from = None  # 过渡完成
             _last_out = combine_frame.copy() if combine_frame is not None else None

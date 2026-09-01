@@ -112,9 +112,11 @@ class DoubaoTTS(BaseTTS):
                     req_params = self._build_req(speaker, resource_id, textevent)
                     # 在 TTS 线程里驱动一个独立事件循环，跑完整 WS 会话
                     asyncio.run(self._run_session(text, req_params, resource_id, msg))
-                except Exception:  # noqa: BLE001 - 会话异常：区别于静默失败，单独记原因
-                    logger.exception(
-                        "DoubaoTTS(wss) session failed (attempt %d/%d)", attempt, max_try
+                except Exception as e:  # noqa: BLE001 - 会话异常：区别于静默失败，单独记原因
+                    # 只记类型+简要原因，不打印完整调用栈，避免刷屏；需深挖时再开 debug
+                    logger.error(
+                        "DoubaoTTS(wss) session failed (attempt %d/%d): %s: %s",
+                        attempt, max_try, type(e).__name__, e,
                     )
                     if attempt >= max_try:
                         self.tts_fail("session_failed", attempts=attempt, retried=attempt > 1)

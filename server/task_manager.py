@@ -9,10 +9,11 @@ from concurrent.futures import ThreadPoolExecutor
 from utils.logger import logger
 
 class AvatarTask:
-    def __init__(self, task_id, model_type, avatar_id, params, notify_url=None):
+    def __init__(self, task_id, model_type, avatar_id, params, notify_url=None, kind="avatar"):
         self.task_id = task_id
         self.model_type = model_type
         self.avatar_id = avatar_id
+        self.kind = kind  # "avatar"=生成数字人形象；"action"=生成动作/表情底座
         self.params = params
         self.status = "pending"  # pending, running, completed, failed
         self.progress = 0
@@ -26,6 +27,7 @@ class AvatarTask:
             "task_id": self.task_id,
             "model_type": self.model_type,
             "avatar_id": self.avatar_id,
+            "kind": self.kind,
             "status": self.status,
             "progress": self.progress,
             "error_msg": self.error_msg,
@@ -41,11 +43,11 @@ class TaskManager:
         self.tasks = {}
         self.lock = threading.Lock()
 
-    def add_task(self, model_type, avatar_id, params, task_id=None, notify_url=None):
+    def add_task(self, model_type, avatar_id, params, task_id=None, notify_url=None, kind="avatar"):
         if task_id is None:
             task_id = str(uuid.uuid4())
 
-        task = AvatarTask(task_id, model_type, avatar_id, params, notify_url)
+        task = AvatarTask(task_id, model_type, avatar_id, params, notify_url, kind)
         with self.lock:
             self.tasks[task_id] = task
 
@@ -73,6 +75,23 @@ class TaskManager:
         with self.lock:
             return sorted([task.to_dict() for task in self.tasks.values()], key=lambda x: x['start_time'], reverse=True)
 
+    def active_action_tasks(self):
+        """返回进行中的动作生成任务：{action_id: {status, progress, bind_avatar}}。
+
+        供动作列表标注「生成中」——生成动作时底座 coords.pkl 与 manifest 都是最后一步才写，
+        若不加标注，前端会把生成中的动作误判成「底座缺失」。
+        """
+        with self.lock:
+            return {
+                t.avatar_id: {
+                    "status": t.status,
+                    "progress": t.progress,
+                    "bind_avatar": (t.params or {}).get("bind_avatar", ""),
+                }
+                for t in self.tasks.values()
+                if t.kind == "action" and t.status in ("pending", "running")
+            }
+
     def _run_task(self, task_id):
         task = self.get_task(task_id)
         if not task:
@@ -86,7 +105,17 @@ class TaskManager:
             def progress_callback(p):
                 task.progress = p
 
-            if task.model_type == "musetalk":
+            if task.kind == "action":
+                from server.action_prep import generate_action
+                generate_action(
+                    model=task.model_type,
+                    action_id=task.avatar_id,
+                    video_path=task.params['video_path'],
+                    bind_avatar_id=task.params['bind_avatar'],
+                    device=task.params.get('device', 'cuda'),
+                    progress_callback=progress_callback,
+                )
+            elif task.model_type == "musetalk":
                 from avatars.musetalk.genavatar import generate_avatar
                 generate_avatar(
                     video_path=task.params['video_path'],
