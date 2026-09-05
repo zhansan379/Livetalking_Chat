@@ -12,6 +12,7 @@
 
 ## 🖼️ 界面长这样
 
+<img width="1248" height="591" alt="image" src="https://github.com/user-attachments/assets/7655e640-3ac2-4a38-b4d2-0a3a4552c1cb" />
 
 
 https://github.com/user-attachments/assets/36e5465a-6636-48ef-8d5a-8a11c7ace7df
